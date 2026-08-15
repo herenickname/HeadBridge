@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Check formatting and publication hygiene
+        run: ./Scripts/check-publication.sh
+
+      - name: Run protocol and provider tests
+        run: swift test
+
+      - name: Build the macOS app
+        env:
+          HEADBRIDGE_SKIP_REGISTRATION: "1"
+        run: ./Scripts/build-app.sh
+
+      - name: Verify bundle and embedded ad-hoc signatures
+        run: |
+          codesign --verify --deep --strict --verbose=2 dist/HeadBridge.app
+          codesign -dv --verbose=4 dist/HeadBridge.app 2>&1 | grep -Fx 'Signature=adhoc'
+          codesign -dv --verbose=4 dist/HeadBridge.app 2>&1 | grep -Fx 'TeamIdentifier=not set'
+          if codesign -dv --verbose=4 dist/HeadBridge.app 2>&1 | grep -E '^Authority='; then
+            echo "CI build unexpectedly has an Apple signing authority." >&2
+            exit 1
+          fi
+          codesign -dv --verbose=4 dist/HeadBridge.app/Contents/PlugIns/HeadBridgeControls.appex 2>&1 | grep -Fx 'Signature=adhoc'
+          codesign -dv --verbose=4 dist/HeadBridge.app/Contents/PlugIns/HeadBridgeControls.appex 2>&1 | grep -Fx 'TeamIdentifier=not set'
+          if codesign -dv --verbose=4 dist/HeadBridge.app/Contents/PlugIns/HeadBridgeControls.appex 2>&1 | grep -E '^Authority='; then
+            echo "CI extension unexpectedly has an Apple signing authority." >&2
+            exit 1
+          fi
+          plutil -lint dist/HeadBridge.app/Contents/Info.plist
+          test -d dist/HeadBridge.app/Contents/Frameworks/Sparkle.framework
+          test -d dist/HeadBridge.app/Contents/PlugIns/HeadBridgeControls.appex
+          test -f dist/HeadBridge.app/Contents/Resources/LICENSE
+          test -f dist/HeadBridge.app/Contents/Resources/THIRD_PARTY_NOTICES.md
+          test -f dist/HeadBridge.app/Contents/Resources/Sparkle-LICENSE.txt
+          test "$(plutil -extract SURequireSignedFeed raw dist/HeadBridge.app/Contents/Info.plist)" = true
+          test "$(plutil -extract SUVerifyUpdateBeforeExtraction raw dist/HeadBridge.app/Contents/Info.plist)" = true

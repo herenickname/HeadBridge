@@ -1,0 +1,228 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* BWRPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* BWRPC.swift */; };
+		A10000000000000000000002 /* MessagePack.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* MessagePack.swift */; };
+		A10000000000000000000003 /* HeadBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* HeadBridgeApp.swift */; };
+		A10000000000000000000004 /* BowersWilkinsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* BowersWilkinsProvider.swift */; };
+		A10000000000000000000005 /* SystemAudioController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* SystemAudioController.swift */; };
+		A10000000000000000000006 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* ContentView.swift */; };
+		A10000000000000000000007 /* MenuPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* MenuPopoverView.swift */; };
+		A10000000000000000000008 /* ControlCenterIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* ControlCenterIntents.swift */; };
+		A10000000000000000000009 /* ControlCenterCommandBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* ControlCenterCommandBridge.swift */; };
+		A1000000000000000000000A /* HeadBridgeControlsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* HeadBridgeControlsBundle.swift */; };
+		A1000000000000000000000B /* ControlCenterIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* ControlCenterIntents.swift */; };
+		A1000000000000000000000C /* HeadBridgeControls.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* HeadBridgeControls.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A1000000000000000000000D /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* AppSettings.swift */; };
+		A1000000000000000000000E /* HeadphoneProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* HeadphoneProvider.swift */; };
+		A1000000000000000000000F /* HeadphoneManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* HeadphoneManager.swift */; };
+		A10000000000000000000010 /* SonyMDRProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* SonyMDRProvider.swift */; };
+		A10000000000000000000011 /* SonyMDRProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* SonyMDRProtocol.swift */; };
+		A10000000000000000000012 /* SonyRFCOMMTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* SonyRFCOMMTransport.swift */; };
+		A10000000000000000000013 /* SonyV1Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* SonyV1Client.swift */; };
+		D10000000000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = D40000000000000000000001 /* Sparkle */; };
+		D10000000000000000000002 /* UpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000001 /* UpdateController.swift */; };
+		D10000000000000000000003 /* BatteryHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* BatteryHistoryStore.swift */; };
+		E10000000000000000000001 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000001 /* LICENSE */; };
+		E10000000000000000000002 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000002 /* THIRD_PARTY_NOTICES.md */; };
+		E10000000000000000000003 /* Sparkle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000003 /* Sparkle-LICENSE.txt */; };
+		E10000000000000000000004 /* HeadBridge.icns in Resources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000004 /* HeadBridge.icns */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A30000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A40000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000002;
+			remoteInfo = HeadBridgeControls;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A60000000000000000000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A1000000000000000000000C /* HeadBridgeControls.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* BWRPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BWRPC.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* MessagePack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagePack.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* HeadBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadBridgeApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* BowersWilkinsProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Providers/BowersWilkins/BowersWilkinsProvider.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* SystemAudioController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioController.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 /* MenuPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuPopoverView.swift; sourceTree = "<group>"; };
+		A20000000000000000000008 /* ControlCenterIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlCenterIntents.swift; sourceTree = "<group>"; };
+		A20000000000000000000009 /* ControlCenterCommandBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlCenterCommandBridge.swift; sourceTree = "<group>"; };
+		A2000000000000000000000A /* HeadBridgeControlsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadBridgeControlsBundle.swift; sourceTree = "<group>"; };
+		A2000000000000000000000B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000000000000000000000C /* HeadBridgeControls-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "HeadBridgeControls-Info.plist"; sourceTree = "<group>"; };
+		A2000000000000000000000E /* HeadBridgeControls.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HeadBridgeControls.entitlements; sourceTree = "<group>"; };
+		A2000000000000000000000D /* HeadBridgeControls.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HeadBridgeControls.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000000000000000000000F /* HeadBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HeadBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000010 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/AppSettings.swift; sourceTree = "<group>"; };
+		A20000000000000000000011 /* HeadphoneProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/HeadphoneProvider.swift; sourceTree = "<group>"; };
+		A20000000000000000000012 /* HeadphoneManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/HeadphoneManager.swift; sourceTree = "<group>"; };
+		A20000000000000000000013 /* SonyMDRProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Providers/Sony/SonyMDRProvider.swift; sourceTree = "<group>"; };
+		A20000000000000000000014 /* SonyMDRProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Providers/Sony/SonyMDRProtocol.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 /* SonyRFCOMMTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Providers/Sony/SonyRFCOMMTransport.swift; sourceTree = "<group>"; };
+		A20000000000000000000016 /* SonyV1Client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Providers/Sony/SonyV1Client.swift; sourceTree = "<group>"; };
+		D20000000000000000000001 /* UpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/UpdateController.swift; sourceTree = "<group>"; };
+		D20000000000000000000002 /* BatteryHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/BatteryHistoryStore.swift; sourceTree = "<group>"; };
+		E20000000000000000000001 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = SOURCE_ROOT; };
+		E20000000000000000000002 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = SOURCE_ROOT; };
+		E20000000000000000000003 /* Sparkle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Licenses/Sparkle-LICENSE.txt"; sourceTree = "<group>"; };
+		E20000000000000000000004 /* HeadBridge.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = HeadBridge.icns; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A70000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (D10000000000000000000001 /* Sparkle in Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A70000000000000000000002 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A80000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A80000000000000000000002 /* HeadBridge */,
+				A80000000000000000000006 /* HeadBridgeControls */,
+				A80000000000000000000007 /* Resources */,
+				A80000000000000000000008 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A80000000000000000000002 /* HeadBridge */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000003 /* HeadBridgeApp.swift */,
+				A20000000000000000000008 /* ControlCenterIntents.swift */,
+				A20000000000000000000010 /* AppSettings.swift */,
+				D20000000000000000000001 /* UpdateController.swift */,
+				D20000000000000000000002 /* BatteryHistoryStore.swift */,
+				A20000000000000000000011 /* HeadphoneProvider.swift */,
+				A20000000000000000000012 /* HeadphoneManager.swift */,
+				A20000000000000000000004 /* BowersWilkinsProvider.swift */,
+				A20000000000000000000013 /* SonyMDRProvider.swift */,
+				A20000000000000000000014 /* SonyMDRProtocol.swift */,
+				A20000000000000000000015 /* SonyRFCOMMTransport.swift */,
+				A20000000000000000000016 /* SonyV1Client.swift */,
+				A80000000000000000000003 /* Protocol */,
+				A80000000000000000000004 /* Services */,
+				A80000000000000000000005 /* Views */,
+			);
+			path = Sources/HeadBridge;
+			sourceTree = SOURCE_ROOT;
+		};
+		A80000000000000000000003 /* Protocol */ = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, ); path = Protocol; sourceTree = "<group>"; };
+		A80000000000000000000004 /* Services */ = {isa = PBXGroup; children = (A20000000000000000000005, A20000000000000000000009, ); path = Services; sourceTree = "<group>"; };
+		A80000000000000000000005 /* Views */ = {isa = PBXGroup; children = (A20000000000000000000006, A20000000000000000000007, ); path = Views; sourceTree = "<group>"; };
+		A80000000000000000000006 /* HeadBridgeControls */ = {isa = PBXGroup; children = (A2000000000000000000000A, ); path = Sources/HeadBridgeControls; sourceTree = SOURCE_ROOT; };
+		A80000000000000000000007 /* Resources */ = {isa = PBXGroup; children = (A2000000000000000000000B, A2000000000000000000000C, A2000000000000000000000E, E20000000000000000000004, E20000000000000000000001, E20000000000000000000002, E20000000000000000000003, ); path = Resources; sourceTree = SOURCE_ROOT; };
+		A80000000000000000000008 /* Products */ = {isa = PBXGroup; children = (A2000000000000000000000F, A2000000000000000000000D, ); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 /* HeadBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA0000000000000000000001 /* Build configuration list for PBXNativeTarget HeadBridge */;
+			buildPhases = (A90000000000000000000001 /* Sources */, A70000000000000000000001 /* Frameworks */, E30000000000000000000001 /* Resources */, A60000000000000000000001 /* Embed App Extensions */, );
+			buildRules = ();
+			dependencies = (AB0000000000000000000001 /* PBXTargetDependency */, );
+			name = HeadBridge;
+			packageProductDependencies = (D40000000000000000000001 /* Sparkle */, );
+			productName = HeadBridge;
+			productReference = A2000000000000000000000F /* HeadBridge.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A50000000000000000000002 /* HeadBridgeControls */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA0000000000000000000002 /* Build configuration list for PBXNativeTarget HeadBridgeControls */;
+			buildPhases = (A90000000000000000000002 /* Sources */, A70000000000000000000002 /* Frameworks */, );
+			buildRules = ();
+			dependencies = ();
+			name = HeadBridgeControls;
+			productName = HeadBridgeControls;
+			productReference = A2000000000000000000000D /* HeadBridgeControls.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A40000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2660; LastUpgradeCheck = 2660; TargetAttributes = {A50000000000000000000001 = {CreatedOnToolsVersion = 26.6; }; A50000000000000000000002 = {CreatedOnToolsVersion = 26.6; }; }; };
+			buildConfigurationList = AA0000000000000000000003 /* Build configuration list for PBXProject HeadBridge */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base, );
+			mainGroup = A80000000000000000000001;
+			packageReferences = (D30000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */, );
+			productRefGroup = A80000000000000000000008 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A50000000000000000000001 /* HeadBridge */, A50000000000000000000002 /* HeadBridgeControls */, );
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E30000000000000000000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (E10000000000000000000004, E10000000000000000000001, E10000000000000000000002, E10000000000000000000003, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A90000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000008, A10000000000000000000009, A1000000000000000000000D, A1000000000000000000000E, A1000000000000000000000F, A10000000000000000000010, A10000000000000000000011, A10000000000000000000012, A10000000000000000000013, D10000000000000000000002, D10000000000000000000003, ); runOnlyForDeploymentPostprocessing = 0; };
+		A90000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A1000000000000000000000A, A1000000000000000000000B, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AB0000000000000000000001 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A50000000000000000000002 /* HeadBridgeControls */; targetProxy = A30000000000000000000001 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AC0000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; EXECUTABLE_NAME = HeadBridge; GENERATE_INFOPLIST_FILE = NO; HEADBRIDGE_UPDATE_FEED_URL = "https://github.com/herenickname/HeadBridge/releases/latest/download/appcast.xml"; INFOPLIST_FILE = Resources/Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks", ); MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 0.1.0; OTHER_LDFLAGS = ("-framework", IOBluetooth, ); PRODUCT_BUNDLE_IDENTIFIER = io.github.herenickname.HeadBridge; PRODUCT_NAME = HeadBridge; SDKROOT = macosx; SWIFT_VERSION = 5.0; }; name = Debug; };
+		AC0000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; ENABLE_HARDENED_RUNTIME = NO; EXECUTABLE_NAME = HeadBridge; GENERATE_INFOPLIST_FILE = NO; HEADBRIDGE_UPDATE_FEED_URL = "https://github.com/herenickname/HeadBridge/releases/latest/download/appcast.xml"; INFOPLIST_FILE = Resources/Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks", ); MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 0.1.0; OTHER_LDFLAGS = ("-framework", IOBluetooth, ); PRODUCT_BUNDLE_IDENTIFIER = io.github.herenickname.HeadBridge; PRODUCT_NAME = HeadBridge; SDKROOT = macosx; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; }; name = Release; };
+		AC0000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Resources/HeadBridgeControls.entitlements; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "Resources/HeadBridgeControls-Info.plist"; MACOSX_DEPLOYMENT_TARGET = 26.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = io.github.herenickname.HeadBridge.controls; PRODUCT_NAME = HeadBridgeControls; SDKROOT = macosx; SKIP_INSTALL = YES; SWIFT_ENABLE_EMIT_CONST_VALUES = YES; SWIFT_VERSION = 5.0; }; name = Debug; };
+		AC0000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Resources/HeadBridgeControls.entitlements; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; CURRENT_PROJECT_VERSION = 1; ENABLE_HARDENED_RUNTIME = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "Resources/HeadBridgeControls-Info.plist"; MACOSX_DEPLOYMENT_TARGET = 26.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = io.github.herenickname.HeadBridge.controls; PRODUCT_NAME = HeadBridgeControls; SDKROOT = macosx; SKIP_INSTALL = YES; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_ENABLE_EMIT_CONST_VALUES = YES; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0; }; name = Release; };
+		AC0000000000000000000005 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ARCHS = "$(ARCHS_STANDARD)"; CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 5.0; }; name = Debug; };
+		AC0000000000000000000006 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ARCHS = "$(ARCHS_STANDARD)"; CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 5.0; }; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA0000000000000000000001 /* Build configuration list for PBXNativeTarget HeadBridge */ = {isa = XCConfigurationList; buildConfigurations = (AC0000000000000000000001, AC0000000000000000000002, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		AA0000000000000000000002 /* Build configuration list for PBXNativeTarget HeadBridgeControls */ = {isa = XCConfigurationList; buildConfigurations = (AC0000000000000000000003, AC0000000000000000000004, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		AA0000000000000000000003 /* Build configuration list for PBXProject HeadBridge */ = {isa = XCConfigurationList; buildConfigurations = (AC0000000000000000000005, AC0000000000000000000006, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		D30000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {kind = exactVersion; version = 2.9.5; };
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		D40000000000000000000001 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D30000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A40000000000000000000001 /* Project object */;
+}

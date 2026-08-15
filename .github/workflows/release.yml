@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release input
+        id: release
+        shell: zsh {0}
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            print -u2 -- "Release workflow must run for a tag."
+            exit 64
+          fi
+          if ! print -r -- "$VERSION" | grep -Eq '^[0-9]+([.][0-9]+){1,3}([.-][0-9A-Za-z.-]+)?$'; then
+            print -u2 -- "Release tags must look like v1.2.3; received: $TAG"
+            exit 64
+          fi
+          : "${SPARKLE_PRIVATE_KEY:?Missing SPARKLE_PRIVATE_KEY repository secret}"
+
+          EXPECTED_PUBLIC_KEY="$(plutil -extract SUPublicEDKey raw Resources/Info.plist)"
+          DERIVED_PUBLIC_KEY="$({
+            /usr/bin/xcrun swift - <<'SWIFT'
+          import CryptoKit
+          import Foundation
+
+          guard
+              let encodedSeed = ProcessInfo.processInfo.environment["SPARKLE_PRIVATE_KEY"]?
+                  .trimmingCharacters(in: .whitespacesAndNewlines),
+              let seed = Data(base64Encoded: encodedSeed),
+              seed.count == 32,
+              let privateKey = try? Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+          else {
+              FileHandle.standardError.write(
+                  Data("SPARKLE_PRIVATE_KEY is not a valid 32-byte Ed25519 seed.\n".utf8)
+              )
+              exit(65)
+          }
+
+          print(privateKey.publicKey.rawRepresentation.base64EncodedString())
+          SWIFT
+          })"
+          if [[ "$DERIVED_PUBLIC_KEY" != "$EXPECTED_PUBLIC_KEY" ]]; then
+            print -u2 -- "SPARKLE_PRIVATE_KEY does not match Resources/Info.plist SUPublicEDKey."
+            exit 78
+          fi
+
+          print -r -- "version=$VERSION" >> "$GITHUB_OUTPUT"
+          print -r -- "build_number=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Test and build universal app without an Apple certificate
+        env:
+          HEADBRIDGE_VERSION: ${{ steps.release.outputs.version }}
+          HEADBRIDGE_BUILD_NUMBER: ${{ steps.release.outputs.build_number }}
+          HEADBRIDGE_UPDATE_FEED_URL: https://github.com/${{ github.repository }}/releases/latest/download/appcast.xml
+        run: |
+          ./Scripts/check-publication.sh
+          swift test
+          ./Scripts/build-release.sh
+
+      - name: Verify release package
+        shell: zsh {0}
+        run: |
+          set -euo pipefail
+          APP_PATH="$GITHUB_WORKSPACE/dist/release/HeadBridge.app"
+          ARCHIVE_PATH="$GITHUB_WORKSPACE/dist/release/HeadBridge.zip"
+          CHECKSUM_PATH="$GITHUB_WORKSPACE/dist/release/HeadBridge.zip.sha256"
+
+          test -d "$APP_PATH"
+          test -s "$ARCHIVE_PATH"
+          test -s "$CHECKSUM_PATH"
+          (
+            cd "$GITHUB_WORKSPACE/dist/release"
+            shasum -a 256 -c HeadBridge.zip.sha256
+          )
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -Fx 'Signature=adhoc'
+          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -Fx 'TeamIdentifier=not set'
+          if codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E '^Authority='; then
+            print -u2 -- "The release unexpectedly has an Apple signing authority."
+            exit 78
+          fi
+
+      - name: Generate and verify signed Sparkle appcast
+        id: appcast
+        shell: zsh {0}
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release.outputs.version }}"
+          BUILD_NUMBER="${{ steps.release.outputs.build_number }}"
+          TAG="$GITHUB_REF_NAME"
+          ARCHIVE="$GITHUB_WORKSPACE/dist/release/HeadBridge.zip"
+          ARCHIVES_DIR="$RUNNER_TEMP/headbridge-updates"
+          APPCAST_PATH="$GITHUB_WORKSPACE/dist/release/appcast.xml"
+          SPARKLE_BIN="$GITHUB_WORKSPACE/.build/ReleaseDerived/SourcePackages/artifacts/sparkle/Sparkle/bin"
+          GENERATE_APPCAST="$SPARKLE_BIN/generate_appcast"
+          SIGN_UPDATE="$SPARKLE_BIN/sign_update"
+
+          if [[ ! -x "$GENERATE_APPCAST" || ! -x "$SIGN_UPDATE" ]]; then
+            print -u2 -- "Sparkle release tools were not found in $SPARKLE_BIN"
+            exit 69
+          fi
+
+          mkdir -p "$ARCHIVES_DIR"
+          cp "$ARCHIVE" "$ARCHIVES_DIR/HeadBridge.zip"
+          print -rn -- "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/" \
+            --full-release-notes-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
+            --link "https://github.com/${GITHUB_REPOSITORY}" \
+            --versions "$BUILD_NUMBER" \
+            --maximum-deltas 0 \
+            -o "$APPCAST_PATH" \
+            "$ARCHIVES_DIR"
+
+          test -s "$APPCAST_PATH"
+          xmllint --noout "$APPCAST_PATH"
+          grep -q 'sparkle:edSignature=' "$APPCAST_PATH"
+          grep -q 'sparkle-signatures:' "$APPCAST_PATH"
+          grep -Fq "<sparkle:version>$BUILD_NUMBER</sparkle:version>" "$APPCAST_PATH"
+          grep -Fq "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>" "$APPCAST_PATH"
+          grep -Fq "url=\"https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/HeadBridge.zip\"" "$APPCAST_PATH"
+          ARCHIVE_LENGTH="$(stat -f '%z' "$ARCHIVE")"
+          grep -Fq "length=\"$ARCHIVE_LENGTH\"" "$APPCAST_PATH"
+
+          ARCHIVE_SIGNATURE="$(sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' "$APPCAST_PATH" | head -n 1)"
+          test -n "$ARCHIVE_SIGNATURE"
+          print -rn -- "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" \
+            --ed-key-file - --verify "$ARCHIVE" "$ARCHIVE_SIGNATURE"
+          print -rn -- "$SPARKLE_PRIVATE_KEY" | "$SIGN_UPDATE" \
+            --ed-key-file - --verify "$APPCAST_PATH"
+
+          print -r -- "path=$APPCAST_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        shell: zsh {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release.outputs.version }}"
+          RELEASE_FLAGS=(--latest)
+          if [[ "$VERSION" == *-* ]]; then
+            RELEASE_FLAGS=(--prerelease)
+          fi
+
+          gh release create "$GITHUB_REF_NAME" \
+            "$GITHUB_WORKSPACE/dist/release/HeadBridge.zip#HeadBridge universal app" \
+            "$GITHUB_WORKSPACE/dist/release/HeadBridge.zip.sha256#SHA-256 checksum" \
+            "${{ steps.appcast.outputs.path }}#Sparkle appcast" \
+            --verify-tag \
+            --generate-notes \
+            "${RELEASE_FLAGS[@]}" \
+            --title "HeadBridge ${VERSION}"
