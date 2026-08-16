@@ -1,0 +1,70 @@
+name: Device support report
+description: Request or report compatibility for another headphone model.
+title: "[Device]: "
+labels: [device-support]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Name recognition does not imply protocol compatibility. The maintainer physically owns and tests only Px7 S3 and WH-1000XM3, so another model needs an owner who can implement or test it on real hardware.
+
+        To add your device, fork or clone HeadBridge, open it in Codex or Claude Code with the latest capable model available to you, follow CONTRIBUTING.md, test the provider on the actual headphones, and open a GitHub Pull Request. This issue records evidence and coordinates the work; it cannot make an untested model validated by itself.
+  - type: input
+    id: model
+    attributes:
+      label: Exact model
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Candidate provider/protocol
+      options:
+        - Bowers & Wilkins RPC
+        - Sony MDR V1
+        - Sony MDR V2 / Link2
+        - New or unknown provider
+    validations:
+      required: true
+  - type: textarea
+    id: controls
+    attributes:
+      label: Working and broken controls
+      description: List battery, ANC/ambient, EQ, volume, sensors, and reconnect behavior separately.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Protocol evidence
+      description: Optional service UUIDs, generation/init reply, or captures.
+  - type: dropdown
+    id: hardware-contribution
+    attributes:
+      label: Hardware contribution
+      description: How can you help validate this exact device?
+      options:
+        - I can implement and test it, then open a Pull Request
+        - I can test patches on the device but need implementation help
+        - I am only reporting the model and cannot test code
+    validations:
+      required: true
+  - type: checkboxes
+    id: clean-room
+    attributes:
+      label: Clean-room confirmation
+      options:
+        - label: I did not attach proprietary binaries or copied decompiled source.
+          required: true

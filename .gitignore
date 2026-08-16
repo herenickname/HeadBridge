@@ -1,0 +1,35 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+dist/
+*.xcuserstate
+xcuserdata/
+
+# Release credentials and generated update artifacts must never be committed.
+*.cer
+*.p12
+*.p8
+*.private-key
+release-secrets/
+updates/
+appcast*.xml
+*.zip
+*.dmg
+*.pkg
+*.xcarchive
+*.dSYM/
+*.ips
+*.log
+*.pem
+*.key
+*.keychain*
+*.mobileprovision
+*.provisionprofile
+.env
+.env.*
+Local.xcconfig
+
+# The public half of the project-owned self-signed release identity is safe
+# to publish. Private keys and all other certificate files remain ignored.
+!Signing/HeadBridge-Release.pem

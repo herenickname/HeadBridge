@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a reproducible HeadBridge problem on supported or experimental hardware.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: input
+    id: app-version
+    attributes:
+      label: HeadBridge version
+      placeholder: "0.1.0 (1)"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "26.0"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Headphone model and firmware
+      placeholder: "WH-1000XM3, firmware …"
+    validations:
+      required: true
+  - type: dropdown
+    id: audio-connected
+    attributes:
+      label: Was the device connected as a macOS audio output?
+      options: ["Yes", "No", "Unknown"]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the initial state, exact action, and what happened next.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Optional logs, screenshots, or protocol details that help reproduce the problem.
