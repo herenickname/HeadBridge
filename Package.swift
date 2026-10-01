@@ -9,7 +9,7 @@ let package = Package(
         .executable(name: "HeadBridge", targets: ["HeadBridge"])
     ],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.5")
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0")
     ],
     targets: [
         .executableTarget(
