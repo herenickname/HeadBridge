@@ -1379,6 +1379,23 @@ private struct ControlsView: View {
                 }
             }
 
+            if controller.supportsToneControls {
+                Section("Bass and Treble") {
+                    toneSlider(
+                        "Bass",
+                        value: controller.bassLevel,
+                        set: controller.setBassLevel,
+                        commit: controller.commitBass
+                    )
+                    toneSlider(
+                        "Treble",
+                        value: controller.trebleLevel,
+                        set: controller.setTrebleLevel,
+                        commit: controller.commitTreble
+                    )
+                }
+            }
+
             if controller.capabilities.contains(.wearSensor) || controller.capabilities.contains(.standbyTimer)
                 || controller.capabilities.contains(.customButton) || controller.capabilities.contains(.voicePrompts)
             {
@@ -1520,6 +1537,30 @@ private struct ControlsView: View {
         .formStyle(.grouped)
         .padding(.vertical, 8)
         .disabled(!controller.isReady)
+    }
+
+    private func toneSlider(
+        _ title: String,
+        value: Int,
+        set: @escaping (Int) -> Void,
+        commit: @escaping () -> Void
+    ) -> some View {
+        LabeledContent(title) {
+            HStack {
+                Slider(
+                    value: Binding(
+                        get: { Double(value) },
+                        set: { set(Int($0.rounded())) }
+                    ),
+                    in: -60...60,
+                    step: 1,
+                    onEditingChanged: { editing in if !editing { commit() } }
+                )
+                Text(String(format: "%+d", value))
+                    .monospacedDigit()
+                    .frame(width: 38, alignment: .trailing)
+            }
+        }
     }
 
     private func infoRow(_ name: String, _ value: String) -> some View {

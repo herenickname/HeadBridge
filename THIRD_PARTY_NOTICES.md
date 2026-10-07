@@ -21,6 +21,7 @@ Public reverse-engineering projects used to cross-check protocol facts and indep
 
 - [SonyHeadphonesClient](https://github.com/mos9527/SonyHeadphonesClient) (MIT);
 - [Gadgetbridge](https://codeberg.org/Freeyourgadget/Gadgetbridge) (AGPL-3.0-or-later);
+- [omarchy-bw-headphones](https://github.com/DominicBoettger/omarchy-bw-headphones) (MIT, revision `b04ffb8`), for the Bowers & Wilkins bass/treble command identifiers and per-model ANC values;
 - [sony-connect-osx](https://github.com/tanat/sony-connect-osx) (reference only; no license file was present when reviewed).
 
 No source from Gadgetbridge or sony-connect-osx is incorporated into HeadBridge.

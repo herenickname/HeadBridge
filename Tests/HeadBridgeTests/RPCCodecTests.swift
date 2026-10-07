@@ -161,6 +161,34 @@ final class RPCCodecTests: XCTestCase {
         )
     }
 
+    func testBassAndTrebleRequests() {
+        XCTAssertEqual(BWRPC.request(BWRPCatalog.bassGet).hexString, "04 0B 12 18 04")
+        XCTAssertEqual(BWRPC.request(BWRPCatalog.trebleGet).hexString, "04 0B 12 1A 04")
+        XCTAssertEqual(
+            BWRPC.request(BWRPCatalog.bassSet, payload: .int(15)).hexString,
+            "07 0B 92 17 04 01 00 0F"
+        )
+        XCTAssertEqual(
+            BWRPC.request(BWRPCatalog.bassSet, payload: .int(-60)).hexString,
+            "08 0B 92 17 04 02 00 D0 C4"
+        )
+        XCTAssertEqual(
+            BWRPC.request(BWRPCatalog.trebleSet, payload: .int(-10)).hexString,
+            "07 0B 92 19 04 01 00 F6"
+        )
+        XCTAssertEqual(
+            BWRPC.request(BWRPCatalog.trebleSet, payload: .int(60)).hexString,
+            "07 0B 92 19 04 01 00 3C"
+        )
+    }
+
+    @MainActor
+    func testToneLevelsAreClampedToTheDeviceRange() {
+        XCTAssertEqual(BowersWilkinsProvider.clampedTone(61), 60)
+        XCTAssertEqual(BowersWilkinsProvider.clampedTone(-200), -60)
+        XCTAssertEqual(BowersWilkinsProvider.clampedTone(-10), -10)
+    }
+
     func testSpatialAudioRequests() {
         XCTAssertEqual(
             BWRPC.request(BWRPCatalog.spatialEnabledSet, payload: .bool(true)).hexString,
@@ -230,6 +258,230 @@ final class RPCCodecTests: XCTestCase {
         XCTAssertTrue(BowersWilkinsProvider.isSupportedHeadphoneName("Pi8"))
         XCTAssertFalse(BowersWilkinsProvider.isSupportedHeadphoneName("P5 Wireless"))
         XCTAssertFalse(BowersWilkinsProvider.isSupportedHeadphoneName("Bowers & Wilkins Zeppelin"))
+        XCTAssertTrue(BowersWilkinsProvider.isGenericAdvertisedName("LE_BWHP"))
+        XCTAssertTrue(BowersWilkinsProvider.isDiscoverableAdvertisedName("LE_BWHP"))
+        XCTAssertTrue(BowersWilkinsProvider.isDiscoverableAdvertisedName("Px7 S3"))
+        XCTAssertFalse(BowersWilkinsProvider.isGenericAdvertisedName("Px8"))
+        XCTAssertFalse(BowersWilkinsProvider.isSupportedHeadphoneName("LE_BWHP"))
+        XCTAssertFalse(BowersWilkinsProvider.isDiscoverableAdvertisedName("LE-Bose QC45"))
+    }
+
+    func testANCWireProfilesRoundTripEveryMode() {
+        XCTAssertEqual(ANCWireProfile.standard.wireValue(for: .off), 0)
+        XCTAssertEqual(ANCWireProfile.standard.wireValue(for: .noiseCancellation), 1)
+        XCTAssertEqual(ANCWireProfile.standard.wireValue(for: .passThrough), 2)
+        XCTAssertEqual(ANCWireProfile.originalPx8.wireValue(for: .off), 1)
+        XCTAssertEqual(ANCWireProfile.originalPx8.wireValue(for: .noiseCancellation), 2)
+        XCTAssertEqual(ANCWireProfile.originalPx8.wireValue(for: .passThrough), 3)
+        XCTAssertNil(ANCWireProfile.originalPx8.mode(forWireValue: 0))
+        XCTAssertNil(ANCWireProfile.originalPx8.mode(forWireValue: 4))
+        XCTAssertNil(ANCWireProfile.standard.mode(forWireValue: 3))
+        for profile in [ANCWireProfile.standard, .originalPx8] {
+            for mode in ANCMode.allCases {
+                XCTAssertEqual(profile.wireValue(for: mode).flatMap(profile.mode(forWireValue:)), mode)
+            }
+        }
+    }
+
+    func testUnverifiedANCWireProfileNeitherReadsNorWrites() {
+        for mode in ANCMode.allCases {
+            XCTAssertNil(ANCWireProfile.unverified.wireValue(for: mode))
+        }
+        for value in 0...4 {
+            XCTAssertNil(ANCWireProfile.unverified.mode(forWireValue: value))
+        }
+    }
+
+    @MainActor
+    func testANCWireProfileSelectionRequiresAVerifiedModel() {
+        XCTAssertEqual(
+            BowersWilkinsProvider.ancWireProfile(advertisedName: "Px7 S3", audioDeviceNames: ["Px7 S3"]),
+            .standard
+        )
+        XCTAssertEqual(
+            BowersWilkinsProvider.ancWireProfile(advertisedName: "LE_BWHP", audioDeviceNames: ["Px8"]),
+            .originalPx8
+        )
+        XCTAssertEqual(
+            BowersWilkinsProvider.ancWireProfile(
+                advertisedName: "LE_BWHP", audioDeviceNames: ["Bowers & Wilkins Px8"]),
+            .originalPx8
+        )
+        // Other generically advertised models use values not confirmed here.
+        for name in ["Px8 S2", "Px7 S2", "Px7 S2e", "PX7", "Pi7 S2"] {
+            XCTAssertEqual(
+                BowersWilkinsProvider.ancWireProfile(advertisedName: "LE_BWHP", audioDeviceNames: [name]),
+                .unverified,
+                name
+            )
+        }
+        XCTAssertEqual(
+            BowersWilkinsProvider.ancWireProfile(advertisedName: "LE_BWHP", audioDeviceNames: ["Px8", "Px7 S3"]),
+            .unverified
+        )
+        XCTAssertEqual(
+            BowersWilkinsProvider.ancWireProfile(advertisedName: "LE_BWHP", audioDeviceNames: []),
+            .unverified
+        )
+    }
+
+    @MainActor
+    func testGenericFallbackWaitsForAModelNamedAdvertisement() {
+        let start = Date(timeIntervalSinceReferenceDate: 1_000)
+        let grace = BowersWilkinsProvider.genericFallbackGrace
+        XCTAssertFalse(BowersWilkinsProvider.allowsGenericFallback(scanStartedAt: start, now: start))
+        XCTAssertFalse(
+            BowersWilkinsProvider.allowsGenericFallback(
+                scanStartedAt: start, now: start.addingTimeInterval(grace - 0.1)))
+        XCTAssertTrue(
+            BowersWilkinsProvider.allowsGenericFallback(
+                scanStartedAt: start, now: start.addingTimeInterval(grace)))
+        XCTAssertTrue(BowersWilkinsProvider.allowsGenericFallback(scanStartedAt: nil, now: start))
+    }
+
+    @MainActor
+    func testRenameIsOfferedOnlyForModelNamedAdvertisers() {
+        XCTAssertTrue(BowersWilkinsProvider.allowsRename(advertisedName: "Px7 S3"))
+        XCTAssertFalse(BowersWilkinsProvider.allowsRename(advertisedName: "LE_BWHP"))
+        XCTAssertFalse(BowersWilkinsProvider.allowsRename(advertisedName: nil))
+    }
+
+    @MainActor
+    func testToneRepliesRejectMalformedAndOutOfRangeValues() throws {
+        XCTAssertEqual(BowersWilkinsProvider.toneLevel(from: .int(-60)), -60)
+        XCTAssertEqual(BowersWilkinsProvider.toneLevel(from: .int(25)), 25)
+        XCTAssertNil(BowersWilkinsProvider.toneLevel(from: .int(61)))
+        XCTAssertNil(BowersWilkinsProvider.toneLevel(from: .int(-61)))
+        XCTAssertNil(BowersWilkinsProvider.toneLevel(from: .bool(true)))
+        XCTAssertNil(BowersWilkinsProvider.toneLevel(from: .string("5")))
+        XCTAssertNil(BowersWilkinsProvider.toneLevel(from: .array([.int(5)])))
+
+        // Replies captured from an original Px8: bass 5, bass -60, and the
+        // error reply to an out-of-range write.
+        let bass = try BWRPC.decode(Data([0x0C, 0x92, 0x18, 0x04, 0x00, 0x00, 0x01, 0x00, 0x05]))
+        XCTAssertEqual(bass.command.key, BWRPCatalog.bassGet.key)
+        XCTAssertEqual(bass.payload.flatMap(BowersWilkinsProvider.toneLevel(from:)), 5)
+        let negative = try BWRPC.decode(Data([0x0C, 0x92, 0x18, 0x04, 0x00, 0x00, 0x02, 0x00, 0xD0, 0xC4]))
+        XCTAssertEqual(negative.payload.flatMap(BowersWilkinsProvider.toneLevel(from:)), -60)
+        let rejected = try BWRPC.decode(Data([0x0C, 0x12, 0x17, 0x04, 0x08, 0x00]))
+        XCTAssertEqual(rejected.command.key, BWRPCatalog.bassSet.key)
+        XCTAssertEqual(rejected.errorCode, 8)
+        XCTAssertFalse(rejected.succeeded)
+
+        // A reply that announces more payload than it carries is refused.
+        XCTAssertThrowsError(try BWRPC.decode(Data([0x0C, 0x92, 0x18, 0x04, 0x00, 0x00, 0x02, 0x00, 0xD0])))
+    }
+
+    @MainActor
+    func testToneControlsRequireBothReadsToSucceed() {
+        var confirmed = BWConfirmedReads()
+        XCTAssertFalse(BowersWilkinsProvider.supportsToneControls(confirmed))
+
+        confirmed.record(key: BWRPCatalog.bassGet.key, errorCode: 0)
+        confirmed.record(key: BWRPCatalog.trebleGet.key, errorCode: 1)
+        XCTAssertFalse(BowersWilkinsProvider.supportsToneControls(confirmed))
+
+        confirmed.record(key: BWRPCatalog.trebleGet.key, errorCode: 0)
+        XCTAssertTrue(BowersWilkinsProvider.supportsToneControls(confirmed))
+    }
+
+    @MainActor
+    func testGenericPeripheralAddressVerdict() {
+        // The original Px8 reports its address as text in this shape, while
+        // the macOS inventory uses colon- or hyphen-separated octets.
+        XCTAssertEqual(
+            BowersWilkinsProvider.addressVerdict(
+                reported: "aabb-cc-ddeeff", pairedConnected: ["AA:BB:CC:DD:EE:FF"]),
+            .matches
+        )
+        XCTAssertEqual(
+            BowersWilkinsProvider.addressVerdict(
+                reported: "AA:BB:CC:DD:EE:FF", pairedConnected: ["11-22-33-44-55-66", "aa-bb-cc-dd-ee-ff"]),
+            .matches
+        )
+        XCTAssertEqual(
+            BowersWilkinsProvider.addressVerdict(
+                reported: "AA:BB:CC:DD:EE:00", pairedConnected: ["AA:BB:CC:DD:EE:FF"]),
+            .mismatch
+        )
+        // Nothing can be concluded without both sides.
+        XCTAssertEqual(
+            BowersWilkinsProvider.addressVerdict(reported: "AA:BB:CC:DD:EE:FF", pairedConnected: []),
+            .unknown
+        )
+        XCTAssertEqual(
+            BowersWilkinsProvider.addressVerdict(reported: "—", pairedConnected: ["AA:BB:CC:DD:EE:FF"]),
+            .unknown
+        )
+        XCTAssertEqual(
+            BowersWilkinsProvider.addressVerdict(reported: "AA:BB:CC", pairedConnected: ["AA:BB:CC:DD:EE:FF"]),
+            .unknown
+        )
+        XCTAssertEqual(
+            BowersWilkinsProvider.addressVerdict(reported: "AA:BB:CC:DD:EE:FF", pairedConnected: ["garbage"]),
+            .unknown
+        )
+    }
+
+    func testIdentityRejectionsAreBounded() {
+        var limit = BWIdentityRejectionLimit()
+        XCTAssertFalse(limit.isExhausted)
+        for _ in 1..<BWIdentityRejectionLimit.maximumConsecutiveRejections {
+            limit.recordRejection()
+            XCTAssertFalse(limit.isExhausted)
+        }
+        limit.recordRejection()
+        XCTAssertTrue(limit.isExhausted)
+
+        limit.reset()
+        XCTAssertFalse(limit.isExhausted)
+        XCTAssertEqual(limit.consecutiveRejections, 0)
+    }
+
+    func testConfirmedReadsSurviveALaterErrorReply() {
+        var confirmed = BWConfirmedReads()
+        let wear = BWRPCatalog.wearGet.key
+        XCTAssertFalse(confirmed.contains(wear))
+
+        confirmed.record(key: wear, errorCode: 1)
+        XCTAssertFalse(confirmed.contains(wear))
+
+        confirmed.record(key: wear, errorCode: 0)
+        XCTAssertTrue(confirmed.contains(wear))
+
+        // Reply captured from an original Px8 while a wear-sensor write was
+        // still being applied.
+        let busy = try? BWRPC.decode(Data([0x0C, 0x12, 0x01, 0x0A, 0x03, 0x00]))
+        XCTAssertEqual(busy?.errorCode, 3)
+        confirmed.record(key: wear, errorCode: busy?.errorCode ?? 0)
+        XCTAssertTrue(confirmed.contains(wear))
+
+        confirmed.removeAll()
+        XCTAssertFalse(confirmed.contains(wear))
+    }
+
+    func testEverySetterHasAConfirmingRead() {
+        let pairs: [(BWRPCCommand, BWRPCCommand)] = [
+            (BWRPCatalog.ancSet, BWRPCatalog.ancGet),
+            (BWRPCatalog.eqSet, BWRPCatalog.eqGet),
+            (BWRPCatalog.eqBypassSet, BWRPCatalog.eqBypassGet),
+            (BWRPCatalog.bassSet, BWRPCatalog.bassGet),
+            (BWRPCatalog.trebleSet, BWRPCatalog.trebleGet),
+            (BWRPCatalog.wearSet, BWRPCatalog.wearGet),
+            (BWRPCatalog.wearSensitivitySet, BWRPCatalog.wearSensitivityGet),
+            (BWRPCatalog.sleepSet, BWRPCatalog.sleepGet),
+            (BWRPCatalog.buttonSet, BWRPCatalog.buttonGet),
+            (BWRPCatalog.voiceSet, BWRPCatalog.voiceGet),
+            (BWRPCatalog.nameSet, BWRPCatalog.nameGet),
+            (BWRPCatalog.spatialEnabledSet, BWRPCatalog.spatialEnabledGet),
+            (BWRPCatalog.spatialPresetSet, BWRPCatalog.spatialPresetGet),
+        ]
+        for (setter, getter) in pairs {
+            XCTAssertEqual(BWRPCatalog.readBack(forSetKey: setter.key), getter, setter.name)
+            // A read is never treated as a setter.
+            XCTAssertNil(BWRPCatalog.readBack(forSetKey: getter.key), getter.name)
+        }
+        XCTAssertNil(BWRPCatalog.readBack(forSetKey: "FF:FF"))
     }
 
     func testBowersWilkinsWriteQueueIsBoundedAndCoalescesPendingCommands() {

@@ -76,6 +76,7 @@ Use **HeadBridge Settings… → Check for Updates…** for in-app updates, or r
 | Provider family | Hardware validation | Status |
 | --- | --- | --- |
 | Bowers & Wilkins RPC | Px7 S3, firmware `3.17.4.17` | Validated |
+| Bowers & Wilkins RPC | Original Px8, RPC software `0(20.0.2.0)` | Validated on hardware; rename hidden, wear sensitivity effect not observed; bass/treble instead of five-band EQ, no True Immersion |
 | Recent PX/PI models exposing the same RPC service | Not yet tested | Experimental and capability-probed |
 | Sony MDR V1 | WH-1000XM3 | Validated on hardware |
 | Other Sony MDR V1 models | Not yet tested | Experimental common controls |

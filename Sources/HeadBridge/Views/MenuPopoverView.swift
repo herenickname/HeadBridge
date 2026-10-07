@@ -315,8 +315,33 @@ struct MenuPopoverView: View {
                 }
             }
 
-            if controller.capabilities.contains(.wearSensor) || controller.capabilities.contains(.voicePrompts) {
+            if controller.supportsToneControls {
                 if controller.capabilities.contains(.noiseControl) || controller.capabilities.contains(.spatialAudio) {
+                    Divider().padding(.horizontal, 14)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Bass and Treble")
+                        .font(.system(size: 13, weight: .semibold))
+                    toneRow(
+                        "Bass",
+                        value: controller.bassLevel,
+                        set: controller.setBassLevel,
+                        commit: controller.commitBass
+                    )
+                    toneRow(
+                        "Treble",
+                        value: controller.trebleLevel,
+                        set: controller.setTrebleLevel,
+                        commit: controller.commitTreble
+                    )
+                }
+                .padding(14)
+            }
+
+            if controller.capabilities.contains(.wearSensor) || controller.capabilities.contains(.voicePrompts) {
+                if controller.capabilities.contains(.noiseControl) || controller.capabilities.contains(.spatialAudio)
+                    || controller.supportsToneControls
+                {
                     Divider().padding(.horizontal, 14)
                 }
                 menuSection("Headphone Controls") {
@@ -605,6 +630,31 @@ struct MenuPopoverView: View {
             content()
         }
         .padding(.bottom, 8)
+    }
+
+    private func toneRow(
+        _ title: String,
+        value: Int,
+        set: @escaping (Int) -> Void,
+        commit: @escaping () -> Void
+    ) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 13))
+                .frame(width: 44, alignment: .leading)
+            Slider(
+                value: Binding(
+                    get: { Double(value) },
+                    set: { set(Int($0.rounded())) }
+                ),
+                in: -60...60,
+                step: 1,
+                onEditingChanged: { editing in if !editing { commit() } }
+            )
+            Text(String(format: "%+d", value))
+                .monospacedDigit()
+                .frame(width: 34, alignment: .trailing)
+        }
     }
 
     private func modeRow(_ title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
