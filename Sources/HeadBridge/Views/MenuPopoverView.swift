@@ -12,6 +12,7 @@ struct MenuPopoverView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var expandedDeviceID: AudioDeviceID?
     @State private var showsInputDevices = false
+    @State private var contentHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,6 +38,13 @@ struct MenuPopoverView: View {
             footer
         }
         .frame(width: 310)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: PopoverContentHeightKey.self, value: proxy.size.height)
+            }
+        )
+        .onPreferenceChange(PopoverContentHeightKey.self) { contentHeight = $0 }
+        .background(PopoverWindowHeightSync(contentHeight: contentHeight))
         .background(.ultraThinMaterial)
         .onAppear {
             showsInputDevices = NSEvent.modifierFlags.contains(.option)
@@ -689,6 +697,39 @@ struct MenuPopoverView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+}
+
+private struct PopoverContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// The menu-bar window does not always follow the content when a device's
+/// controls expand, which leaves the content centred and clipped at both
+/// ends. Keep the window as tall as the content, anchored to its top edge.
+private struct PopoverWindowHeightSync: NSViewRepresentable {
+    let contentHeight: CGFloat
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let contentHeight = contentHeight
+        DispatchQueue.main.async {
+            guard let window = view.window, contentHeight > 0 else { return }
+            let chrome = window.frame.height - window.contentLayoutRect.height
+            var target = contentHeight + chrome
+            if let visible = window.screen?.visibleFrame {
+                target = min(target, window.frame.maxY - visible.minY)
+            }
+            guard abs(window.frame.height - target) > 0.5 else { return }
+            var frame = window.frame
+            frame.origin.y = frame.maxY - target
+            frame.size.height = target
+            window.setFrame(frame, display: true)
+        }
     }
 }
 
