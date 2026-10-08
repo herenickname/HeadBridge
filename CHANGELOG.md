@@ -3,6 +3,11 @@
 All notable user-visible changes will be documented here. HeadBridge follows
 [Semantic Versioning](https://semver.org/) once public releases begin.
 
+## Unreleased
+
+- Menu: `Option`-click shows the input devices every time the menu opens, and
+  pressing `Option` while it is open reveals them (seen broken on macOS 27).
+
 ## 0.1.7 - 2026-08-16
 
 ### First public beta

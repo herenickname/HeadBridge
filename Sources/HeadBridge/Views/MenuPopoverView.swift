@@ -12,6 +12,8 @@ struct MenuPopoverView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var expandedDeviceID: AudioDeviceID?
     @State private var showsInputDevices = false
+    @State private var optionKeyMonitor: Any?
+    @State private var menuWindow: NSWindow?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,6 +40,7 @@ struct MenuPopoverView: View {
         }
         .frame(width: 310)
         .background(.ultraThinMaterial)
+        .background(MenuWindowReader(window: $menuWindow))
         .onAppear {
             showsInputDevices = NSEvent.modifierFlags.contains(.option)
             expandedDeviceID = nil
@@ -47,7 +50,42 @@ struct MenuPopoverView: View {
             {
                 controller.startScanning()
             }
+            installOptionKeyMonitor()
         }
+        .onDisappear { removeOptionKeyMonitor() }
+        // The menu window can be reused between openings, in which case
+        // `onAppear` does not run again; re-read Option whenever it becomes key.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard isMenuWindow(notification.object) else { return }
+            showsInputDevices = NSEvent.modifierFlags.contains(.option)
+            installOptionKeyMonitor()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
+            guard isMenuWindow(notification.object) else { return }
+            removeOptionKeyMonitor()
+        }
+    }
+
+    private func isMenuWindow(_ object: Any?) -> Bool {
+        guard let menuWindow, let window = object as? NSWindow else { return false }
+        return window === menuWindow
+    }
+
+    /// Reveals the input list when Option is pressed while the menu is already open.
+    private func installOptionKeyMonitor() {
+        guard optionKeyMonitor == nil else { return }
+        optionKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            if event.modifierFlags.contains(.option), menuWindow == nil || event.window === menuWindow {
+                showsInputDevices = true
+            }
+            return event
+        }
+    }
+
+    private func removeOptionKeyMonitor() {
+        guard let optionKeyMonitor else { return }
+        NSEvent.removeMonitor(optionKeyMonitor)
+        self.optionKeyMonitor = nil
     }
 
     private var inputSection: some View {
@@ -689,6 +727,33 @@ struct MenuPopoverView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+}
+
+/// Hands the menu-bar window to the view so key-window notifications and
+/// key events can be matched against it.
+private struct MenuWindowReader: NSViewRepresentable {
+    @Binding var window: NSWindow?
+
+    func makeNSView(context: Context) -> WindowReportingView {
+        let view = WindowReportingView()
+        view.onWindowChange = { newWindow in
+            DispatchQueue.main.async {
+                if window !== newWindow { window = newWindow }
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ view: WindowReportingView, context: Context) {}
+
+    final class WindowReportingView: NSView {
+        var onWindowChange: ((NSWindow?) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindowChange?(window)
+        }
     }
 }
 
