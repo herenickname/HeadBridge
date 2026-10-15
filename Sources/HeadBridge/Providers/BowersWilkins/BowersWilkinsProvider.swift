@@ -305,6 +305,11 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
     private var refreshWorkItems: [String: DispatchWorkItem] = [:]
     private var didStartInitialRefresh = false
     private var pairedDeviceCount = 0
+    /// Replies reach every connected client, including those to another
+    /// app's requests. The paired-device list is read one entry at a time,
+    /// so HeadBridge only follows replies to the requests it sent itself.
+    private var awaitingPairedDeviceCount = false
+    private var awaitingPairedDevice = false
     private var nextPairedDeviceIndex: Int?
     private var audioConnectedDeviceNames: [String] = []
     private var automaticConnection = BWAutomaticConnectionTracker()
@@ -843,6 +848,8 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
         }
         let data = BWRPC.request(command, payload: payload)
         addLog(.outgoing, "\(command.name) [\(command.key)]  \(data.hexString)")
+        if command.key == BWRPCatalog.pairedDeviceCountGet.key { awaitingPairedDeviceCount = true }
+        if command.key == BWRPCatalog.pairedDeviceGet.key { awaitingPairedDevice = true }
         let pending = BWRPCPendingWrite(commandKey: command.key, commandName: command.name, data: data)
         if writeQueue.enqueue(pending) == .rejectedFull {
             addLog(.info, "Ignored \(command.name): write queue is full")
@@ -1011,6 +1018,8 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
         didStartInitialRefresh = false
         restoredProfileDeviceID = nil
         nextPairedDeviceIndex = nil
+        awaitingPairedDeviceCount = false
+        awaitingPairedDevice = false
         readings.removeAll()
         clearPublishedDeviceState()
     }
@@ -1224,8 +1233,12 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
             macAddress = Self.normalizedMACAddress(rawAddress) ?? rawAddress.uppercased()
             scheduleProfileRestore()
         case BWRPCatalog.pairedDeviceCountGet.key:
+            guard awaitingPairedDeviceCount else { break }
+            awaitingPairedDeviceCount = false
             if let count = payload.intValue { beginPairedDeviceRead(count: count) }
         case BWRPCatalog.pairedDeviceGet.key:
+            guard awaitingPairedDevice else { break }
+            awaitingPairedDevice = false
             applyPairedDevice(payload)
         case "04:16":
             if let values = payload.arrayValue?.compactMap(\.intValue), values.count >= 3 {
