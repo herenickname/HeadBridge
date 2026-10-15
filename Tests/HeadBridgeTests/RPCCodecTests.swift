@@ -56,6 +56,25 @@ final class RPCCodecTests: XCTestCase {
         withExtendedLifetime(cancellation) {}
     }
 
+    func testTransportLogExportListsEntriesOldestFirstWithMilliseconds() {
+        let start = Date(timeIntervalSince1970: 1_760_000_000.25)
+        let entries = [
+            TransportLogEntry(time: start, direction: .outgoing, text: "04 0B 12 01 03"),
+            TransportLogEntry(time: start.addingTimeInterval(0.5), direction: .incoming, text: "0C 92 01 03"),
+        ]
+
+        let text = TransportLogEntry.exportText(entries, timeZone: TimeZone(identifier: "UTC")!)
+
+        XCTAssertEqual(
+            text,
+            """
+            2025-10-09T08:53:20.250Z TX 04 0B 12 01 03
+            2025-10-09T08:53:20.750Z RX 0C 92 01 03
+
+            """
+        )
+    }
+
     func testBluetoothInventoryDecodesPairedAndConnectedDevicesWithoutDuplicates() throws {
         let json = #"""
             {

@@ -47,6 +47,25 @@ struct TransportLogEntry: Identifiable {
     let time: Date
     let direction: Direction
     let text: String
+
+    /// Time of day with milliseconds, for the log list.
+    static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter
+    }()
+
+    /// Plain-text export: one entry per line, oldest first, with a full
+    /// local timestamp.
+    static func exportText(_ entries: [TransportLogEntry], timeZone: TimeZone = .current) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = timeZone
+        return entries
+            .map { "\(formatter.string(from: $0.time)) \($0.direction.rawValue) \($0.text)" }
+            .joined(separator: "\n") + "\n"
+    }
 }
 
 struct PairedDeviceInfo: Identifiable {

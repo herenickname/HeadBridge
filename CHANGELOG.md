@@ -3,6 +3,11 @@
 All notable user-visible changes will be documented here. HeadBridge follows
 [Semantic Versioning](https://semver.org/) once public releases begin.
 
+## Unreleased
+
+- Protocol diagnostics: log times include seconds and milliseconds, and
+  the log can be copied or saved to a text file.
+
 ## 0.1.7 - 2026-08-16
 
 ### First public beta

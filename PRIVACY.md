@@ -30,4 +30,6 @@ require an internet connection.
 Advanced protocol diagnostics are disabled by default. When enabled, raw values
 and transport logs may contain headphone names, serial numbers, Bluetooth
 addresses, and paired-source information. HeadBridge does not upload these
-diagnostics automatically.
+diagnostics automatically. **Copy Log** puts the transport log on the
+clipboard, and **Save Log…** writes it to a file you choose with owner-only
+permissions; review it before sharing.

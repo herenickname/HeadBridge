@@ -1,6 +1,8 @@
+import AppKit
 import Charts
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject private var manager: HeadphoneManager
@@ -1606,12 +1608,65 @@ private struct ProtocolTransportLogView: View {
                                     ? .green : entry.direction == .outgoing ? .blue : .secondary
                             )
                             .frame(width: 34, alignment: .leading)
-                        Text(entry.time, style: .time).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        Text(TransportLogEntry.timeFormatter.string(from: entry.time))
+                            .font(.caption.monospaced()).foregroundStyle(.secondary)
                         Text(entry.text).font(.caption.monospaced()).textSelection(.enabled)
                     }
                 }
             }
         }
         .padding(.vertical, 12)
+        .contextMenu {
+            Button("Copy Log", action: copyLog).disabled(entries.isEmpty)
+            Button("Save Log…", action: saveLog).disabled(entries.isEmpty)
+        }
+        .toolbar {
+            ToolbarItem {
+                Menu {
+                    Button("Copy Log", action: copyLog)
+                    Button("Save Log…", action: saveLog)
+                } label: {
+                    Label("Export Log", systemImage: "square.and.arrow.up")
+                }
+                .help("Copy or save the log")
+                .disabled(entries.isEmpty)
+            }
+        }
+    }
+
+    private func copyLog() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(TransportLogEntry.exportText(entries), forType: .string)
+    }
+
+    /// Writes the log to a file the user picks. It can contain serial
+    /// numbers and Bluetooth addresses, so only the owner can read it.
+    private func saveLog() {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = "HeadBridge-log-\(formatter.string(from: Date())).txt"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Self.writeOwnerOnly(TransportLogEntry.exportText(entries), to: url)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    /// Creates the file with owner-only permissions from the start, so its
+    /// contents are never readable by other users. The save panel has
+    /// already confirmed replacing an existing file.
+    private static func writeOwnerOnly(_ text: String, to url: URL) throws {
+        try? FileManager.default.removeItem(at: url)
+        let descriptor = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        try handle.write(contentsOf: Data(text.utf8))
+        try handle.close()
     }
 }
