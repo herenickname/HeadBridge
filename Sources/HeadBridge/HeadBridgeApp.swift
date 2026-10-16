@@ -171,6 +171,11 @@ struct HeadBridgeApp: App {
                 .environmentObject(settings)
                 .environmentObject(updates)
                 .environmentObject(batteryHistory)
+                .onAppear { applyDockIconPolicy(settingsWindowOpen: true) }
+                .onDisappear { applyDockIconPolicy(settingsWindowOpen: false) }
+                .onChange(of: settings.showsDockIconWithSettings) { _, _ in
+                    applyDockIconPolicy(settingsWindowOpen: true)
+                }
                 .frame(
                     minWidth: 680,
                     idealWidth: 760,
@@ -238,5 +243,19 @@ struct HeadBridgeApp: App {
             let battery = provider.batteryPercent
         else { return nil }
         return "\(battery)%"
+    }
+
+    /// Shows a Dock icon while the settings window is open, when the user
+    /// has asked for one; otherwise HeadBridge stays a menu-bar-only app.
+    private func applyDockIconPolicy(settingsWindowOpen: Bool) {
+        let showsIcon = settingsWindowOpen && settings.showsDockIconWithSettings
+        NSApp.setActivationPolicy(showsIcon ? .regular : .accessory)
+        if showsIcon {
+            NSApp.activate(ignoringOtherApps: true)
+        } else if settingsWindowOpen {
+            // Leaving the Dock deactivates the app, which sends the settings
+            // window behind other windows; bring it back to the front.
+            DispatchQueue.main.async { HeadBridgeWindowCoordinator.focusSettingsWindow() }
+        }
     }
 }

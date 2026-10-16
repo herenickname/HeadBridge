@@ -293,6 +293,14 @@ private struct GeneralSettingsView: View {
                 .pickerStyle(.radioGroup)
             }
 
+            Section("Dock") {
+                Toggle(isOn: $settings.showsDockIconWithSettings) {
+                    Text("Show in Dock while settings are open")
+                    Text("Also adds HeadBridge to Command-Tab while the window is open.")
+                }
+                .toggleStyle(.switch)
+            }
+
             Section("Startup") {
                 Toggle(
                     "Launch HeadBridge at login",

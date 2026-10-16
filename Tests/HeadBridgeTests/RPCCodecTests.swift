@@ -336,6 +336,18 @@ final class RPCCodecTests: XCTestCase {
     }
 
     @MainActor
+    func testDockIconPreferenceDefaultsOffAndPersists() {
+        let suiteName = "HeadBridgeTests.Settings.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertFalse(AppSettings(defaults: defaults).showsDockIconWithSettings)
+
+        AppSettings(defaults: defaults).showsDockIconWithSettings = true
+        XCTAssertTrue(AppSettings(defaults: defaults).showsDockIconWithSettings)
+    }
+
+    @MainActor
     func testBatteryHistoryIsPersistentAndIsolatedPerDevice() {
         let storageURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("HeadBridgeBatteryHistory-\(UUID().uuidString).plist")
