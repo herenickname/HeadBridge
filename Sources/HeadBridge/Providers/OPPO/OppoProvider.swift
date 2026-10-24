@@ -36,6 +36,7 @@ final class OppoProvider: ObservableObject, HeadphoneProvider {
     @Published private(set) var eqCurrentID: UInt8?
     @Published private(set) var customEQPresets: [OppoEQPreset] = []
     @Published private(set) var wearing: OppoWearingState?
+    @Published private(set) var wearingUpdatedAt: Date?
     @Published private(set) var dualDevices: [OppoDualDevice] = []
     @Published private(set) var preferredDeviceMAC: String?
     @Published private(set) var gestures: [OppoGestureBinding] = []
@@ -346,9 +347,12 @@ final class OppoProvider: ObservableObject, HeadphoneProvider {
         send(.alertVolume)
     }
 
+    var wearingIsFresh: Bool {
+        OppoRingSafety.canRing(wearing: wearing, updatedAt: wearingUpdatedAt)
+    }
+
     var canRingEarbuds: Bool {
-        guard connectionState == .ready, let wearing else { return false }
-        return wearing.bothOutOfEar
+        connectionState == .ready && wearingIsFresh
     }
 
     var ringBlockedByWearing: Bool {
@@ -360,7 +364,7 @@ final class OppoProvider: ObservableObject, HeadphoneProvider {
         guard connectionState == .ready else { return }
         // Ringing a bud that is still in an ear can be dangerously loud.
         // Require an explicit "both out of ear" report; unknown also refuses.
-        guard let wearing, wearing.bothOutOfEar else { return }
+        guard wearingIsFresh else { return }
         ringTask?.cancel()
         isRinging = true
         send(.findEarbuds, [0x01])
@@ -375,6 +379,7 @@ final class OppoProvider: ObservableObject, HeadphoneProvider {
 
     private func applyWearing(_ state: OppoWearingState?) {
         wearing = state
+        wearingUpdatedAt = state == nil ? nil : Date()
         guard isRinging else { return }
         guard let state, state.bothOutOfEar else {
             ringTask?.cancel()
@@ -1065,6 +1070,7 @@ final class OppoProvider: ObservableObject, HeadphoneProvider {
         eqCurrentID = nil
         customEQPresets = []
         wearing = nil
+        wearingUpdatedAt = nil
         dualDevices = []
         preferredDeviceMAC = nil
         gestures = []

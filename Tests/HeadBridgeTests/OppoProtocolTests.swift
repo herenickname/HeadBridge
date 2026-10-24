@@ -433,3 +433,30 @@ extension OppoProtocolTests {
         XCTAssertEqual(rightIn?.bothOutOfEar, false)
     }
 }
+
+extension OppoProtocolTests {
+    func testRingRequiresFreshBothOutWearingReport() {
+        let now = Date()
+        let bothOut = OppoWearingState(left: 0x04, right: 0x04, caseStatus: 0x04)
+        let leftIn = OppoWearingState(left: 0x07, right: 0x04, caseStatus: 0x04)
+
+        XCTAssertTrue(OppoRingSafety.canRing(wearing: bothOut, updatedAt: now, now: now))
+        XCTAssertTrue(
+            OppoRingSafety.canRing(
+                wearing: bothOut,
+                updatedAt: now.addingTimeInterval(-2),
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            OppoRingSafety.canRing(
+                wearing: bothOut,
+                updatedAt: now.addingTimeInterval(-4),
+                now: now
+            )
+        )
+        XCTAssertFalse(OppoRingSafety.canRing(wearing: bothOut, updatedAt: nil, now: now))
+        XCTAssertFalse(OppoRingSafety.canRing(wearing: nil, updatedAt: now, now: now))
+        XCTAssertFalse(OppoRingSafety.canRing(wearing: leftIn, updatedAt: now, now: now))
+    }
+}

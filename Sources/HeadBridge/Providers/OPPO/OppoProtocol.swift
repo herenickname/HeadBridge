@@ -254,6 +254,22 @@ enum OppoBatteryCodec {
     }
 }
 
+/// Ringing safety is based on an explicit, recent both-out-of-ear report.
+/// A cached complete report is not enough if polling stops answering.
+enum OppoRingSafety {
+    static let maxWearingAge: TimeInterval = 3
+
+    static func canRing(
+        wearing: OppoWearingState?,
+        updatedAt: Date?,
+        now: Date = Date()
+    ) -> Bool {
+        guard let wearing, let updatedAt, wearing.bothOutOfEar else { return false }
+        let age = now.timeIntervalSince(updatedAt)
+        return age >= 0 && age <= maxWearingAge
+    }
+}
+
 enum OppoNoiseLevel: Int, CaseIterable, Identifiable {
     case light = 0x40
     case deep = 0x10

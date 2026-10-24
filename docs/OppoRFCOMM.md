@@ -66,7 +66,7 @@ reassembled because none of the commands HeadBridge sends or parses need them.
 | `0x0103` | request → `0x8103` | Product id: `00 <id LE24>` |
 | `0x0105` | request → `0x8105` | Firmware description (not shown in the UI) |
 | `0x0106` | request → `0x8106` | Battery |
-| `0x0109` | request → `0x8109` | Wearing state (not used) |
+| `0x0109` | request → `0x8109` | Wearing state (polled for the ring guard) |
 | `0x010C` | request → `0x810C` | Noise-control state, payload `01 01` |
 | `0x0404` | write → `0x8404` | Set noise-control mode |
 | `0x0204` | unsolicited | Multiplexed events, payload byte 0 is the event code |
@@ -157,12 +157,14 @@ Exercised on the physical device through the shipped provider code:
   live in the menu bar, and cycled Noise Cancellation -> Ambient -> Off ->
   Noise Cancellation through its Control Center notification path.
 
-Not exercised and therefore not advertised:
+Not exercised in the initial battery/noise pass:
 
-- case battery level (the case was not present during the test);
-- wearing state, multipoint list, EQ, touch controls, firmware display;
 - models other than the Air5s;
 - controlling the buds from two apps at the same time.
+
+The later Air5s validation below covers case battery, wearing, the multipoint
+list, EQ, gestures, firmware display, and the host-side ring guard. The audible
+find-my-earbuds ring was not used as a validation step.
 
 ## Air5s feature discovery
 
@@ -205,9 +207,10 @@ The writable switches are auto play/pause (`04`), dual connection (`11`), and
 Windows Swift Pair (`37`); Golden Sound (`0B`, not exposed) is writable only when `0x0115`
 returns a stored record. The app also writes spatial type `0/1/2` (`0x0422`),
 alert volume (`0x0427`), find-my-earbuds (`0x0400`), dual-device actions
-(`0x0429`), and the full gesture table (`0x0401`). Dual-device actions and
-ringing are implemented from the documented layout but were not exercised on
-the validated unit; gesture writes and alert volume were.
+(`0x0429`), and the full gesture table (`0x0401`). Gesture writes, alert volume,
+and the dual-device list/read-back were exercised. Find-my-earbuds has a
+host-side fresh-wearing guard; the audible ring itself was not used as a
+validation step.
 
 Hi-Res (`18`):
 the Air5s refused it on an AAC link (ACK status `02`) and a write can close the
@@ -227,7 +230,8 @@ Read-only state that is available for a richer UI:
 - gesture table `0x0108` (14 entries: single play/pause, double voice
   assistant, triple none, hold ANC cycle, slide volume, call double
   answer/end, call long hold decline);
-- wearing state `0x0109`, alert volume `0x0130` (1-10, observed 10);
+- wearing state `0x0109` (polled every 1.5 s and used by the fresh ring guard),
+  alert volume `0x0130` (1-10, observed 10);
 - firmware `0x0105`, product id `0x0103`.
 
 Not supported or not offered by this firmware/model, so HeadBridge does not
@@ -293,6 +297,11 @@ that belongs to it. The table is stored on the earbuds, not in macOS, so it
 survives a normal case/reconnect cycle. It is only lost on a factory reset or
 firmware update that clears settings.
 
+Find-my-earbuds only starts when a complete both-out-of-ear report is at most
+3 seconds old. Polling runs every 1.5 seconds; a missing or partial report
+invalidates the cache, and an in-ear report stops an active ring. Host-side
+tests cover fresh, stale, no-response, partial, in-ear, and both-out states.
+
 ## Codec picker
 
 The app exposes AAC, LDAC, LHDC, and LHDC V5 through `0x041A`. Changing the
@@ -311,9 +320,9 @@ screen can show AAC while the OPPO phone's link is LHDC.
 
 Gesture remapping (`0x0401 <count> <entries>`), dual-device connect/disconnect
 (`0x0429`), alert volume (`0x0427`), find-my-earbuds (`0x0400`), and codec
-selection (`0x041A`) are accepted by this firmware but were not exercised
-because they either disturb the current connection or produce audible/visible
-side effects.
+selection (`0x041A`) are accepted by this firmware. Gesture writes, alert
+volume, and the dual-device list/read-back were exercised; the audible find
+ring and switching the other host's audio were not used as validation steps.
 
 ## Sources
 

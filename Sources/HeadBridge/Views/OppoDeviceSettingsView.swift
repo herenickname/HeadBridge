@@ -337,6 +337,10 @@ struct OppoDeviceSettingsView: View {
                 Text("Wearing status is not known yet; ringing stays disabled until both earbuds are confirmed out of ear.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else if !provider.wearingIsFresh {
+                Text("The last wearing report is stale; waiting for a fresh both-out-of-ear report before ringing.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else {
                 Text("Both earbuds are out of ear; ringing is safe.")
                     .font(.caption)
