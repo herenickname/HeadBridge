@@ -122,6 +122,7 @@ struct HeadBridgeApp: App {
     @StateObject private var manager: HeadphoneManager
     @StateObject private var bowersWilkins: BowersWilkinsProvider
     @StateObject private var sony: SonyMDRProvider
+    @StateObject private var oppo: OppoProvider
     @StateObject private var systemAudio: SystemAudioController
     @StateObject private var settings: AppSettings
     @StateObject private var updates: UpdateController
@@ -134,19 +135,21 @@ struct HeadBridgeApp: App {
 
         let bowersWilkins = BowersWilkinsProvider()
         let sony = SonyMDRProvider()
+        let oppo = OppoProvider()
         let systemAudio = SystemAudioController()
         let settings = AppSettings()
         let updates = UpdateController()
         bowersWilkins.setDiagnosticsEnabled(settings.developerModeEnabled)
         sony.setDiagnosticsEnabled(settings.developerModeEnabled)
-        let manager = HeadphoneManager(providers: [bowersWilkins, sony])
-        let batteryHistory = BatteryHistoryStore(providers: [bowersWilkins, sony])
+        let manager = HeadphoneManager(providers: [bowersWilkins, sony, oppo])
+        let batteryHistory = BatteryHistoryStore(providers: [bowersWilkins, sony, oppo])
         manager.installAudioDeviceDiscovery(systemAudio: systemAudio)
         manager.installVolumeSynchronization(settings: settings, systemAudio: systemAudio)
 
         _manager = StateObject(wrappedValue: manager)
         _bowersWilkins = StateObject(wrappedValue: bowersWilkins)
         _sony = StateObject(wrappedValue: sony)
+        _oppo = StateObject(wrappedValue: oppo)
         _systemAudio = StateObject(wrappedValue: systemAudio)
         _settings = StateObject(wrappedValue: settings)
         _updates = StateObject(wrappedValue: updates)
@@ -167,6 +170,7 @@ struct HeadBridgeApp: App {
                 .environmentObject(manager)
                 .environmentObject(bowersWilkins)
                 .environmentObject(sony)
+                .environmentObject(oppo)
                 .environmentObject(systemAudio)
                 .environmentObject(settings)
                 .environmentObject(updates)
@@ -201,6 +205,7 @@ struct HeadBridgeApp: App {
                 .environmentObject(manager)
                 .environmentObject(bowersWilkins)
                 .environmentObject(sony)
+                .environmentObject(oppo)
                 .environmentObject(systemAudio)
                 .environmentObject(settings)
                 .environmentObject(updates)
