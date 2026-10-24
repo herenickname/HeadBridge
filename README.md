@@ -4,14 +4,14 @@
   <img src="assets/branding/headbridge-icon.png" width="128" alt="HeadBridge app icon">
 </p>
 
-HeadBridge brings AirPods-style system controls to third-party Bluetooth headphones on macOS. It is a native menu-bar app with independently implemented providers for recent Bowers & Wilkins RPC devices and Sony MDR V1 headphones.
+HeadBridge brings AirPods-style system controls to third-party Bluetooth headphones on macOS. It is a native menu-bar app with independently implemented providers for recent Bowers & Wilkins RPC devices, Sony MDR V1 headphones, and OPPO Enco earbuds.
 
 [![CI](https://github.com/herenickname/HeadBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/herenickname/HeadBridge/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/herenickname/HeadBridge?display_name=tag)](https://github.com/herenickname/HeadBridge/releases/latest)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > [!WARNING]
-> HeadBridge is an early beta. Hardware validation currently covers Bowers & Wilkins Px7 S3 and Sony WH-1000XM3. Recognition of another model is not a guarantee that every control is compatible. Public builds use a project-owned self-signed identity, not an Apple Developer ID, and are not notarized; read [Self-signed builds and security](#self-signed-builds-and-security) before installing.
+> HeadBridge is an early beta. Hardware validation currently covers Bowers & Wilkins Px7 S3, Sony WH-1000XM3, and a contributor-tested OPPO Enco Air5s. Recognition of another model is not a guarantee that every control is compatible. Public builds use a project-owned self-signed identity, not an Apple Developer ID, and are not notarized; read [Self-signed builds and security](#self-signed-builds-and-security) before installing.
 
 <p align="center">
   <img src="assets/screenshots/menu-controls.png" width="280" alt="HeadBridge menu showing Bowers & Wilkins controls alongside macOS audio routing">
@@ -80,6 +80,7 @@ Use **HeadBridge Settings… → Check for Updates…** for in-app updates, or r
 | Recent PX/PI models exposing the same RPC service | Not yet tested | Experimental and capability-probed |
 | Sony MDR V1 | WH-1000XM3 | Validated on hardware |
 | Other Sony MDR V1 models | Not yet tested | Experimental common controls |
+| OPPO Enco RFCOMM | Enco Air5s, firmware `163.163.102` | Battery, noise control, spatial audio, game mode, and EQ validated on contributor hardware |
 | Sony MDR V2 / Link2 | Service generation is detected | Not supported yet |
 
 Firmware updates can change behavior. Please include the exact model, firmware, macOS version, and working/broken controls in a [device-support report](.github/ISSUE_TEMPLATE/device_support.yml).
@@ -121,6 +122,8 @@ full checklist.
 - Per-headset 24-hour, 7-day, and 30-day battery charts. While connected, one lightweight sample is stored every five minutes and retained locally for 90 days.
 - Optional Launch at Login and cryptographically verified Sparkle updates from GitHub Releases.
 - Per-provider restore-on-connect profiles that reapply settings after another source, such as a phone, changes them.
+- A codec picker (AAC/LDAC/LHDC/LHDC V5) that restarts the link; the other
+  multipoint device still negotiates its own codec.
 - macOS 26 Control Center controls for active-headphone noise mode and Sticky Input.
 - No continuous vendor scan while a matching Bluetooth audio output is absent.
 
@@ -155,9 +158,36 @@ The pure-Swift V1 stack uses `IOBluetooth` RFCOMM, incremental framing, an ACK/r
 
 See the independent [Sony MDR V1 wire notes](docs/SonyMDRV1.md) and [V2 adapter notes](docs/SonyMDRV2.md).
 
+### OPPO Enco RFCOMM
+
+The OPPO stack uses the buds' Bluetooth Classic RFCOMM control service with bounded framing and a model profile keyed by the product id reported over the wire. Enco Air5s validation currently covers:
+
+- battery (left, right, and case), charging state, and connection lifecycle;
+- noise cancellation, ambient, and off, with a read-back after every write;
+- three noise-cancellation depths (Light, Deep, Smart), Smart's current level,
+  and a selectable touch-and-hold cycle (off/ANC/ambient); continuous strength
+  writes are refused by the firmware;
+- fixed or head-tracking-style spatial audio (switched through the earbuds'
+  direct spatial-type command), game mode, and the game-sound-effect type;
+- built-in EQ presets and the custom preset stored on the earbuds;
+- feature toggles for auto play/pause, dual connection, and Windows Swift Pair;
+- a Hi-Res switch that forces LHDC V5 and reports when the macOS link still
+  negotiates AAC, so the flag has no audible effect;
+- alert volume, ring-my-earbuds, dual-device connect/disconnect/preferred, and
+  gesture remapping across the 14 touch slots with every function available on
+  every slot;
+- a custom-EQ editor (create, update, delete a 10-band preset); the Golden
+  Sound hearing-profile UI is intentionally absent because the Air5s refuses
+  the hearing-test command (`0x040D`, status `01`); the three EQ presets remain;
+- read-only firmware, product id, codec, wearing state, dual-connection list,
+  and gesture bindings;
+- restore-on-connect profiles, disconnect/reconnect, and stale-state cleanup.
+
+Only the Air5s write table is verified; other OPPO Enco models are recognized and show battery but hide noise control until their bits are confirmed on hardware. See the [OPPO Enco RFCOMM wire notes](docs/OppoRFCOMM.md).
+
 ## Known limitations
 
-- Only the two models listed as validated above have been tested on hardware.
+- Only the models listed as validated above have been tested on hardware, and the OPPO Enco Air5s was validated on contributor hardware rather than by the maintainer.
 - Sony MDR V2/Link2 is recognized but not implemented.
 - Sony volume synchronization currently flows from macOS to the headphones, not in both directions.
 - Changing Sony sound-quality mode reconnects Bluetooth audio.
