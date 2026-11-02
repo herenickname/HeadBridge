@@ -70,8 +70,8 @@ jobs:
             exit 78
           fi
 
-          # The first public release was build 12, before this workflow's run history.
-          # Keep future stable and prerelease builds above that historical baseline.
+          # Version 0.2.0 was published as build 27 from workflow run 15.
+          # Retain its offset so following runs continue above published builds.
           BUILD_NUMBER=$((12 + GITHUB_RUN_NUMBER))
           print -r -- "version=$VERSION" >> "$GITHUB_OUTPUT"
           print -r -- "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"

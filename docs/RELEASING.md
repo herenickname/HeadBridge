@@ -110,11 +110,12 @@ Nothing is uploaded by this command.
    verify the checklist in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 
 The workflow uses `12 + GITHUB_RUN_NUMBER` for `CFBundleVersion` and the tag
-without its leading `v` for `CFBundleShortVersionString`. The offset preserves
-update ordering from the historical public release: version 0.1.7 has build
-number 12, while this release workflow starts at run 1. Keep
-this historical offset for stable releases and prereleases; do not reset the
-build sequence below a published value.
+without its leading `v` for `CFBundleShortVersionString`. Public version 0.1.7
+has build number 12; version 0.2.0 was published as build 27 from workflow run
+15. Retain the offset for all following stable releases and prereleases so
+run 16 produces build 28 rather than regressing below an installed build 27.
+GitHub can retain its workflow counter even when the run-history API is empty;
+do not infer the next build number from the number of retained runs.
 
 ## Failure behavior
 
