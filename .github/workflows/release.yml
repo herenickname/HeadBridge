@@ -70,8 +70,11 @@ jobs:
             exit 78
           fi
 
+          # The first public release was build 12, before this workflow's run history.
+          # Keep future stable and prerelease builds above that historical baseline.
+          BUILD_NUMBER=$((12 + GITHUB_RUN_NUMBER))
           print -r -- "version=$VERSION" >> "$GITHUB_OUTPUT"
-          print -r -- "build_number=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          print -r -- "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
 
       - name: Test and build the unsigned universal release bundle
         env:

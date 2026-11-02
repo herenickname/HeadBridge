@@ -5,48 +5,34 @@ All notable user-visible changes will be documented here. HeadBridge follows
 
 ## Unreleased
 
-- Bowers & Wilkins: discover headphones that advertise over BLE under the
-  generic `LE_BWHP` name, hardware-tested with the original Px8.
-- Bowers & Wilkins: use the original Px8's ANC mode values, so Off, Noise
-  Cancellation, and Pass-Through select the correct mode.
-- Bowers & Wilkins: bass and treble sliders for headphones that have a two-band
-  tone control instead of the five-band EQ, hardware-tested with the original
-  Px8.
-- Bowers & Wilkins: confirm a changed setting only after the headphones
-  acknowledge it, and keep a confirmed control visible if a later read fails.
-  Toggling the wear sensor on an original Px8 could bounce back or make the
-  control disappear.
-- Bowers & Wilkins: for generically advertised headphones, drop the control
-  link when the headphone's reported Bluetooth address is not a connected
-  paired headphone, so a neighbour's headphones are not controlled by mistake.
-- Menu-bar popover: keep the window as tall as its content when a device's
-  controls expand, instead of clipping them (seen on macOS 27).
-- Menu: `Option`-click shows the input devices every time the menu opens, and
-  pressing `Option` while it is open reveals them (seen broken on macOS 27).
-- Protocol diagnostics: log times include seconds and milliseconds, and
-  the log can be copied or saved to a text file.
-- Optional Dock icon while the settings window is open (General → Dock).
+## 0.2.0 - 2026-11-02
 
-- OPPO Enco RFCOMM provider with battery, noise control,
-  restore-on-connect, fixed spatial audio, game mode, game sound effects, and
-  equalizer presets, plus writable feature switches for auto play/pause, dual
-  connection, and Windows Swift Pair. Spatial audio is switched
-  through the earbuds' direct spatial-type command, plus spatial type 2,
-  three ANC depth levels (Light/Deep/Smart), a selectable touch-and-hold cycle,
-  alert volume, ring-my-earbuds, dual-device connect/disconnect/preferred,
-  gesture remapping with every function available on every slot (grouped into
-  main/call rows, split slide entries merged), a custom-EQ editor, and a
-  Hi-Res switch. The Golden Sound hearing-profile UI was removed after the
-  Air5s refused every hearing-test command; the EQ presets remain. The codec
-  display clears on disconnect and refreshes every 15 seconds; spatial audio
-  clears Hi-Res and re-applies after the reconnect, and the Hi-Res switch
-  clears the flag with `0x0403 18 00`. The OPPO settings screen also shows
-  firmware, codec, per-bud/case battery, wearing state, and the
-  dual-connection list. Validated on an OPPO Enco Air5s
-  (firmware `163.163.102`) by a contributor on the physical device.
-- OPPO codec picker (AAC/LDAC/LHDC/LHDC V5), live wearing-status polling, and a
-  guarded find-my-earbuds action that only rings when both earbuds are confirmed
-  out of ear.
+### Added
+
+- OPPO Enco Air5s support, verified by a contributor on firmware `163.163.102`:
+  per-bud/case battery, noise modes and ANC depth, spatial and game controls,
+  built-in and custom EQ, gestures, multipoint, codec settings, and wearing state.
+- Guarded Find Earbuds for Air5s: both earbuds must have fresh out-of-ear reports;
+  in-ear or partial reports stop ringing, as does a manual disconnect.
+- Original Bowers & Wilkins Px8 support: generic BLE discovery, correct ANC values,
+  bass/treble controls, automatic reconnection, and restore-on-connect.
+- Optional Dock/Cmd+Tab presence while the Settings window is open.
+- Millisecond protocol-log timestamps and copy/save export with owner-only files.
+
+### Fixed
+
+- Expanded menu-bar controls resize their popover, and Option-click input
+  selection is re-evaluated each time the menu opens.
+- Bowers & Wilkins settings read back after setter acknowledgements; a transient
+  read error no longer hides a previously confirmed control.
+- Generic Bowers & Wilkins control links are checked against paired Bluetooth
+  addresses, and Px8 connection state/battery appear correctly in the sidebar.
+
+### Updated
+
+- Sparkle 2.10.1 is selected consistently by both SwiftPM and the Xcode project.
+- Release build numbers remain higher than the public 0.1.7 build so existing
+  installations can receive the update through Sparkle.
 
 ## 0.1.7 - 2026-08-16
 

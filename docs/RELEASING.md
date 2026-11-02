@@ -109,9 +109,12 @@ Nothing is uploaded by this command.
 6. Install the published archive on a second Mac or a clean user account and
    verify the checklist in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 
-The workflow uses the monotonically increasing GitHub run number for
-`CFBundleVersion` and the tag without its leading `v` for
-`CFBundleShortVersionString`.
+The workflow uses `12 + GITHUB_RUN_NUMBER` for `CFBundleVersion` and the tag
+without its leading `v` for `CFBundleShortVersionString`. The offset preserves
+update ordering from the historical public release: version 0.1.7 has build
+number 12, while this release workflow starts at run 1. Keep
+this historical offset for stable releases and prereleases; do not reset the
+build sequence below a published value.
 
 ## Failure behavior
 
