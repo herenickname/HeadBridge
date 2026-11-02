@@ -22,8 +22,9 @@ enum ANCMode: Int, CaseIterable, Identifiable {
 enum ANCWireProfile: Equatable {
     /// Hardware-verified on Px7 S3: off 0, noise cancellation 1, pass-through 2.
     case standard
-    /// Hardware-verified on the original Px8 (RPC software `0(20.0.2.0)`):
-    /// off 1, noise cancellation 2, pass-through 3. The device rejects 0.
+    /// Hardware-verified on original Px8 (RPC software `0(20.0.2.0)`) and
+    /// Px7 S2 / Px7 S2e: off 1, noise cancellation 2, pass-through 3.
+    /// The devices reject 0 with device error 6.
     case originalPx8
     /// A generically advertised model whose values have not been confirmed on
     /// hardware. Noise control stays hidden and nothing is written.
@@ -816,19 +817,34 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
         )
     }
 
-    /// A generic advertisement does not identify the model, so the Px8 values
-    /// apply only when the one connected Bowers & Wilkins audio output is an
-    /// original Px8. Any other generically advertised model is unverified.
+    /// A generic advertisement does not identify the model, so the verified values
+    /// apply when the connected model is an original Px8 or Px7 S2 / Px7 S2e
+    /// (hardware-verified). Any other generically advertised model is unverified.
     static func ancWireProfile(advertisedName: String, audioDeviceNames: [String]) -> ANCWireProfile {
+        if isPx8OrPx7S2FamilyName(advertisedName) {
+            return .originalPx8
+        }
         guard isGenericAdvertisedName(advertisedName) else { return .standard }
         guard audioDeviceNames.count == 1, let audioName = audioDeviceNames.first,
-            isOriginalPx8Name(audioName)
+            isPx8OrPx7S2FamilyName(audioName)
         else { return .unverified }
         return .originalPx8
     }
 
     static func isOriginalPx8Name(_ name: String) -> Bool {
-        ["px8", "bowerswilkinspx8"].contains(BluetoothDeviceNameMatcher.normalized(name))
+        isPx8OrPx7S2FamilyName(name)
+    }
+
+    static func isPx8OrPx7S2FamilyName(_ name: String) -> Bool {
+        let normalized = BluetoothDeviceNameMatcher.normalized(name)
+        if ["px8", "bowerswilkinspx8"].contains(normalized) ||
+           (normalized.contains("px8") && !normalized.contains("px8s2")) {
+            return true
+        }
+        if normalized.contains("px7s2") || normalized.contains("px7s2e") {
+            return true
+        }
+        return false
     }
 
     private func displayName(for item: DiscoveredPeripheral) -> String {
