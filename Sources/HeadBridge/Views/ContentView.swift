@@ -8,6 +8,7 @@ struct ContentView: View {
     @EnvironmentObject private var manager: HeadphoneManager
     @EnvironmentObject private var controller: BowersWilkinsProvider
     @EnvironmentObject private var sony: SonyMDRProvider
+    @EnvironmentObject private var oppo: OppoProvider
     @EnvironmentObject private var settings: AppSettings
     @State private var selection: SettingsDestination = .general
 
@@ -59,6 +60,8 @@ struct ContentView: View {
                 BWDeviceSettingsView(deviceName: device.name)
             } else if device.providerID == sony.providerID {
                 SonyDeviceSettingsView(deviceName: device.name)
+            } else if device.providerID == oppo.providerID {
+                OppoDeviceSettingsView(deviceName: device.name)
             } else {
                 GenericProviderSettingsView(provider: provider, deviceName: device.name)
             }
@@ -376,7 +379,7 @@ private struct GeneralSettingsView: View {
     }
 }
 
-private struct DeviceDetailHeader<Actions: View>: View {
+struct DeviceDetailHeader<Actions: View>: View {
     let name: String
     let vendor: String
     let state: HeadphoneConnectionState
@@ -441,7 +444,7 @@ private struct DeviceDetailHeader<Actions: View>: View {
     }
 }
 
-private struct BatteryHistorySection: View {
+struct BatteryHistorySection: View {
     @EnvironmentObject private var batteryHistory: BatteryHistoryStore
 
     let providerID: String
