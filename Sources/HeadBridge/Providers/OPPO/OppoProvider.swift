@@ -168,6 +168,10 @@ final class OppoProvider: ObservableObject, HeadphoneProvider {
     }
 
     func disconnect() {
+        // Stop the audible search before closing the channel or cancelling its stop timer.
+        if isRinging {
+            send(.findEarbuds, [0x00])
+        }
         sessionGeneration &+= 1
         handshakeTask?.cancel()
         handshakeTask = nil
