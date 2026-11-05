@@ -28,6 +28,8 @@
 	<true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>Connect to supported Bluetooth headphones to read status and change device settings.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Equalize the audio the Mac plays to an original Px8.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>

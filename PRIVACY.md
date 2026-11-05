@@ -3,6 +3,10 @@
 HeadBridge has no analytics, advertising SDK, account, or cloud sync. Headphone
 control happens locally over Bluetooth and Core Audio.
 
+The optional equalizer for the original Px8 is off by default and asks for
+permission to capture system audio. It processes audio in memory inside the
+app and never records, stores, or sends it.
+
 ## Data stored on this Mac
 
 HeadBridge stores preferences and optional restore-on-connect profiles in the

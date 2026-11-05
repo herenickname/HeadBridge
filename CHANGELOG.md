@@ -5,6 +5,7 @@ All notable user-visible changes will be documented here. HeadBridge follows
 
 ## Unreleased
 
+- Original Px8: optional ten-band Mac equalizer, off by default.
 - Bowers & Wilkins: discover headphones that advertise over BLE under the
   generic `LE_BWHP` name, hardware-tested with the original Px8.
 - Bowers & Wilkins: use the original Px8's ANC mode values, so Off, Noise
