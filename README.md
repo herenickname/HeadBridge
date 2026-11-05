@@ -83,6 +83,8 @@ Use **HeadBridge Settings… → Check for Updates…** for in-app updates, or r
 | OPPO Enco RFCOMM | Enco Air5s, firmware `163.163.102` | Battery, noise control, spatial audio, game mode, and EQ validated on contributor hardware |
 | Sony MDR V2 / Link2 | Service generation is detected | Not supported yet |
 
+- Original Px8: optional ten-band Mac equalizer, off by default, for audio played to the headphones (macOS 14.2 or newer).
+
 Firmware updates can change behavior. Please include the exact model, firmware, macOS version, and working/broken controls in a [device-support report](.github/ISSUE_TEMPLATE/device_support.yml).
 
 ## Add support for your headphones

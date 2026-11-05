@@ -1,5 +1,6 @@
 import AudioToolbox
 import CoreAudio
+import Combine
 import Foundation
 
 struct SystemAudioDevice: Identifiable, Equatable {
@@ -59,6 +60,7 @@ final class SystemAudioController: ObservableObject {
     private var volumeListenerDeviceID: AudioDeviceID?
     private var volumeListenerAddresses: [AudioObjectPropertyAddress] = []
     private var isShutdown = false
+    private var deviceSubscriptions: Set<AnyCancellable> = []
     private static let stickyInputUIDDefaultsKey = "StickyInputDeviceUID"
 
     init() {
@@ -66,6 +68,15 @@ final class SystemAudioController: ObservableObject {
         refresh()
         installSystemPropertyListeners()
         configureVolumeListeners(for: defaultDeviceID)
+    }
+
+    internal init(
+        devices: CurrentValueSubject<[SystemAudioDevice], Never>,
+        defaultDeviceID: CurrentValueSubject<AudioDeviceID?, Never>
+    ) {
+        isShutdown = true
+        devices.sink { [weak self] in self?.devices = $0 }.store(in: &deviceSubscriptions)
+        defaultDeviceID.sink { [weak self] in self?.defaultDeviceID = $0 }.store(in: &deviceSubscriptions)
     }
 
     func refresh() {
@@ -354,7 +365,7 @@ final class SystemAudioController: ObservableObject {
         volumePropertyListener = nil
     }
 
-    private static func allDeviceIDs() -> [AudioDeviceID] {
+    nonisolated static func allDeviceIDs() -> [AudioDeviceID] {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -441,7 +452,7 @@ final class SystemAudioController: ObservableObject {
         return SystemAudioDevice(id: id, uid: uid, name: name, transportType: transport)
     }
 
-    private static func stringProperty(_ id: AudioObjectID, selector: AudioObjectPropertySelector) -> String? {
+    nonisolated static func stringProperty(_ id: AudioObjectID, selector: AudioObjectPropertySelector) -> String? {
         var address = AudioObjectPropertyAddress(
             mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
