@@ -168,10 +168,60 @@ struct BWIdentityRejectionLimit: Equatable {
     mutating func reset() { consecutiveRejections = 0 }
 }
 
+enum BWPairedDeviceRequest: Equatable {
+    case count
+    case entry(Int)
+
+    init?(commandKey: String, payload: MessagePackValue?) {
+        switch commandKey {
+        case BWRPCatalog.pairedDeviceCountGet.key:
+            self = .count
+        case BWRPCatalog.pairedDeviceGet.key:
+            guard let index = payload?.intValue, index >= 0 else { return nil }
+            self = .entry(index)
+        default:
+            return nil
+        }
+    }
+
+    var commandKey: String {
+        switch self {
+        case .count: BWRPCatalog.pairedDeviceCountGet.key
+        case .entry: BWRPCatalog.pairedDeviceGet.key
+        }
+    }
+}
+
+/// Paired-device replies are broadcast and carry no transaction ID. Limit
+/// attribution to the command actually sent and a bounded reply window.
+struct BWPairedDeviceReplies {
+    private var pending: (request: BWPairedDeviceRequest, deadline: ContinuousClock.Instant)?
+
+    func isAwaiting(at now: ContinuousClock.Instant = .now) -> Bool {
+        pending.map { now < $0.deadline } ?? false
+    }
+
+    mutating func didDispatch(_ write: BWRPCPendingWrite, at now: ContinuousClock.Instant = .now) {
+        guard let request = write.pairedDeviceRequest else { return }
+        pending = (request, now.advanced(by: .seconds(4)))
+    }
+
+    mutating func consume(_ message: BWRPCMessage, at now: ContinuousClock.Instant = .now)
+        -> BWPairedDeviceRequest?
+    {
+        guard let pending, message.kind == .response, message.command.key == pending.request.commandKey else {
+            return nil
+        }
+        self.pending = nil
+        return now < pending.deadline ? pending.request : nil
+    }
+}
+
 struct BWRPCPendingWrite: Equatable {
     let commandKey: String
     let commandName: String
     let data: Data
+    var pairedDeviceRequest: BWPairedDeviceRequest? = nil
 }
 
 struct BWRPCWriteQueue {
@@ -412,7 +462,7 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
     private var refreshWorkItems: [String: DispatchWorkItem] = [:]
     private var didStartInitialRefresh = false
     private var pairedDeviceCount = 0
-    private var nextPairedDeviceIndex: Int?
+    private var pairedDeviceReplies = BWPairedDeviceReplies()
     private var audioConnectedDeviceNames: [String] = []
     private var automaticConnection = BWAutomaticConnectionTracker()
     private var automaticReconnectTask: Task<Void, Never>?
@@ -1123,9 +1173,18 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
             addLog(.info, "Ignored \(command.name): transport is not ready")
             return
         }
+        let pairedRequest = BWPairedDeviceRequest(commandKey: command.key, payload: payload)
+        if pairedRequest != nil,
+            pairedDeviceReplies.isAwaiting() || writeQueue.items.contains(where: { $0.pairedDeviceRequest != nil })
+        {
+            addLog(.info, "Ignored \(command.name): a paired-device request is already pending")
+            return
+        }
         let data = BWRPC.request(command, payload: payload)
         addLog(.outgoing, "\(command.name) [\(command.key)]  \(data.hexString)")
-        let pending = BWRPCPendingWrite(commandKey: command.key, commandName: command.name, data: data)
+        let pending = BWRPCPendingWrite(
+            commandKey: command.key, commandName: command.name, data: data, pairedDeviceRequest: pairedRequest
+        )
         if writeQueue.enqueue(pending) == .rejectedFull {
             addLog(.info, "Ignored \(command.name): write queue is full")
             return
@@ -1147,6 +1206,7 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
         guard let pending = writeQueue.popFirst() else { return }
 
         writeInFlight = type == .withResponse
+        pairedDeviceReplies.didDispatch(pending)
         peripheral.writeValue(pending.data, for: characteristic, type: type)
         if type == .withResponse {
             armWriteTimeout(for: pending, identity: identity)
@@ -1292,7 +1352,8 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
         writeInFlight = false
         didStartInitialRefresh = false
         restoredProfileDeviceID = nil
-        nextPairedDeviceIndex = nil
+        pairedDeviceCount = 0
+        pairedDeviceReplies = BWPairedDeviceReplies()
         readings.removeAll()
         confirmedReads.removeAll()
         clearPublishedDeviceState()
@@ -1472,7 +1533,9 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
                 errorCode: message.errorCode,
                 updatedAt: Date()
             )
-            if message.succeeded { apply(message) }
+            // Even an error or a response without a payload consumes its request.
+            let pairedRequest = pairedDeviceReplies.consume(message)
+            if message.succeeded { apply(message, pairedRequest: pairedRequest) }
             if message.kind == .response, message.succeeded,
                 let readBack = BWRPCatalog.readBack(forSetKey: message.command.key)
             {
@@ -1483,7 +1546,7 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
         }
     }
 
-    private func apply(_ message: BWRPCMessage) {
+    private func apply(_ message: BWRPCMessage, pairedRequest: BWPairedDeviceRequest?) {
         guard let payload = message.payload else { return }
         let key = message.command.key
         switch key {
@@ -1532,9 +1595,10 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
             scheduleProfileRestore()
             verifyGenericPeripheralIdentity()
         case BWRPCatalog.pairedDeviceCountGet.key:
+            guard pairedRequest == .count else { break }
             if let count = payload.intValue { beginPairedDeviceRead(count: count) }
         case BWRPCatalog.pairedDeviceGet.key:
-            applyPairedDevice(payload)
+            if case .entry(let index)? = pairedRequest { applyPairedDevice(payload, index: index) }
         case "04:16":
             if let values = payload.arrayValue?.compactMap(\.intValue), values.count >= 3 {
                 audioSource = Self.sourceName(values[0])
@@ -1548,13 +1612,12 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
     private func beginPairedDeviceRead(count: Int) {
         pairedDeviceCount = max(0, count)
         pairedDevices.removeAll()
-        guard pairedDeviceCount > 0 else { nextPairedDeviceIndex = nil; return }
-        nextPairedDeviceIndex = 0
+        guard pairedDeviceCount > 0 else { return }
         send(BWRPCatalog.pairedDeviceGet, payload: .int(0))
     }
 
-    private func applyPairedDevice(_ payload: MessagePackValue) {
-        guard let index = nextPairedDeviceIndex,
+    private func applyPairedDevice(_ payload: MessagePackValue, index: Int) {
+        guard index < pairedDeviceCount,
             case .map(let map) = payload,
             let name = map["2"]?.stringValue
         else { return }
@@ -1570,10 +1633,9 @@ final class BowersWilkinsProvider: NSObject, ObservableObject {
 
         let next = index + 1
         if next < pairedDeviceCount {
-            nextPairedDeviceIndex = next
             send(BWRPCatalog.pairedDeviceGet, payload: .int(Int64(next)))
         } else {
-            nextPairedDeviceIndex = nil
+            pairedDeviceCount = 0
         }
     }
 
