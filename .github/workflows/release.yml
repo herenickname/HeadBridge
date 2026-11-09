@@ -70,8 +70,11 @@ jobs:
             exit 78
           fi
 
+          # Version 0.2.0 was published as build 27 from workflow run 15.
+          # Retain its offset so following runs continue above published builds.
+          BUILD_NUMBER=$((12 + GITHUB_RUN_NUMBER))
           print -r -- "version=$VERSION" >> "$GITHUB_OUTPUT"
-          print -r -- "build_number=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          print -r -- "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
 
       - name: Test and build the unsigned universal release bundle
         env:
