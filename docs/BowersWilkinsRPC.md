@@ -219,8 +219,12 @@ device error `0`.
 - The five-band EQ, EQ bypass, and spatial-audio reads return device error `1`,
   so those controls stay hidden.
 
-Recent PX/PI names are accepted as
-discovery candidates, but other models have not yet been verified. Their actual
+For Px8 S2 firmware `7.18.11.4`, a contributor tested HeadBridge 0.1.7 on
+macOS 27.2 (`26B123`) and confirmed battery and charging, all three noise modes,
+wear sensor, quick-action button, and reconnect. EQ and restore-on-connect are
+unverified in this report. [Test report](https://github.com/herenickname/HeadBridge/issues/13#issuecomment-6579140037)
+
+Other recent PX/PI names are accepted as discovery candidates. Their actual
 compatibility must be established by characteristic discovery, successful
 command replies, and a device-support report containing the exact model,
 firmware, macOS version, and tested controls.
