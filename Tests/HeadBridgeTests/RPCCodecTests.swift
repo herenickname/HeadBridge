@@ -558,6 +558,68 @@ final class RPCCodecTests: XCTestCase {
         XCTAssertNil(queue.popFirst())
     }
 
+    func testPairedDeviceRepliesRequireADispatchedRequest() throws {
+        let count = try BWRPC.decode(Data([0x0C, 0x92, 0x0B, 0x05, 0, 0, 1, 0, 2]))
+        let entry = try BWRPC.decode(Data([0x0C, 0x92, 0x04, 0x05, 0, 0, 7, 0, 0x81, 0xA1, 0x32, 0xA3, 77, 97, 99]))
+        let notification = try BWRPC.decode(Data([0x0D, 0x12, 0x0B, 0x05]))
+        let countWrite = BWRPCPendingWrite(
+            commandKey: count.command.key, commandName: count.command.name, data: Data(), pairedDeviceRequest: .count
+        )
+        let batteryWrite = BWRPCPendingWrite(commandKey: "08:0C", commandName: "Battery", data: Data())
+        var queue = BWRPCWriteQueue(capacity: 1)
+        var replies = BWPairedDeviceReplies()
+        let now = ContinuousClock.now
+
+        XCTAssertEqual(queue.enqueue(batteryWrite), .appended)
+        XCTAssertEqual(queue.enqueue(countWrite), .rejectedFull)
+        replies.didDispatch(try XCTUnwrap(queue.popFirst()), at: now)
+        XCTAssertNil(replies.consume(count, at: now))
+
+        XCTAssertEqual(queue.enqueue(countWrite), .appended)
+        XCTAssertNil(replies.consume(count, at: now), "A queued request has not reached the device")
+        replies.didDispatch(try XCTUnwrap(queue.popFirst()), at: now)
+        XCTAssertNil(replies.consume(notification, at: now))
+        XCTAssertNil(replies.consume(entry, at: now))
+        XCTAssertEqual(replies.consume(count, at: now), .count)
+        XCTAssertNil(replies.consume(count, at: now), "A duplicate cannot start another list read")
+
+        for index in 0..<2 {
+            let request = BWPairedDeviceRequest(commandKey: entry.command.key, payload: .int(Int64(index)))
+            replies.didDispatch(
+                BWRPCPendingWrite(
+                    commandKey: entry.command.key, commandName: entry.command.name, data: Data(),
+                    pairedDeviceRequest: request
+                ), at: now
+            )
+            XCTAssertEqual(replies.consume(entry, at: now), .entry(index))
+            XCTAssertNil(replies.consume(entry, at: now))
+        }
+    }
+
+    func testPairedDeviceRepliesClearOnErrorExpiryAndSessionReset() throws {
+        let count = try BWRPC.decode(Data([0x0C, 0x92, 0x0B, 0x05, 0, 0, 1, 0, 2]))
+        let error = try BWRPC.decode(Data([0x0C, 0x12, 0x0B, 0x05, 1, 0]))
+        let write = BWRPCPendingWrite(
+            commandKey: count.command.key, commandName: count.command.name, data: Data(), pairedDeviceRequest: .count
+        )
+        var replies = BWPairedDeviceReplies()
+        let now = ContinuousClock.now
+
+        replies.didDispatch(write, at: now)
+        XCTAssertEqual(replies.consume(error, at: now), .count)
+        XCTAssertFalse(replies.isAwaiting(at: now))
+        XCTAssertNil(replies.consume(count, at: now))
+
+        replies.didDispatch(write, at: now)
+        let later = now.advanced(by: .seconds(5))
+        XCTAssertFalse(replies.isAwaiting(at: later))
+        XCTAssertNil(replies.consume(count, at: later))
+
+        replies.didDispatch(write, at: now)
+        replies = BWPairedDeviceReplies()
+        XCTAssertNil(replies.consume(count, at: now))
+    }
+
     func testBowersWilkinsTransportRequiresConfirmedResponseNotifications() {
         var readiness = BWRPCTransportReadiness(
             requestDiscovered: true,
