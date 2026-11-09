@@ -125,6 +125,7 @@ struct HeadBridgeApp: App {
     @StateObject private var oppo: OppoProvider
     @StateObject private var systemAudio: SystemAudioController
     @StateObject private var settings: AppSettings
+    @StateObject private var hostEqualizer: HostEqualizerController
     @StateObject private var updates: UpdateController
     @StateObject private var batteryHistory: BatteryHistoryStore
 
@@ -138,6 +139,7 @@ struct HeadBridgeApp: App {
         let oppo = OppoProvider()
         let systemAudio = SystemAudioController()
         let settings = AppSettings()
+        let hostEqualizer = HostEqualizerController(settings: settings, systemAudio: systemAudio)
         let updates = UpdateController()
         bowersWilkins.setDiagnosticsEnabled(settings.developerModeEnabled)
         sony.setDiagnosticsEnabled(settings.developerModeEnabled)
@@ -152,13 +154,15 @@ struct HeadBridgeApp: App {
         _oppo = StateObject(wrappedValue: oppo)
         _systemAudio = StateObject(wrappedValue: systemAudio)
         _settings = StateObject(wrappedValue: settings)
+        _hostEqualizer = StateObject(wrappedValue: hostEqualizer)
         _updates = StateObject(wrappedValue: updates)
         _batteryHistory = StateObject(wrappedValue: batteryHistory)
         ControlCenterCommandBridge.shared.install(
             headphones: manager,
             systemAudio: systemAudio
         )
-        appDelegate.shutdownHandler = { [weak manager, weak systemAudio] in
+        appDelegate.shutdownHandler = { [weak hostEqualizer, weak manager, weak systemAudio] in
+            hostEqualizer?.shutdown()
             manager?.shutdown()
             systemAudio?.shutdown()
         }
@@ -173,6 +177,7 @@ struct HeadBridgeApp: App {
                 .environmentObject(oppo)
                 .environmentObject(systemAudio)
                 .environmentObject(settings)
+                .environmentObject(hostEqualizer)
                 .environmentObject(updates)
                 .environmentObject(batteryHistory)
                 .onAppear { applyDockIconPolicy(settingsWindowOpen: true) }

@@ -773,6 +773,10 @@ private enum DeveloperDeviceSection: String, CaseIterable, Identifiable {
 private struct BWDeviceSettingsView: View {
     @EnvironmentObject private var controller: BowersWilkinsProvider
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var equalizer: HostEqualizerController
+    private let bandLabels = [
+        "31.5 Hz", "63 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz", "16 kHz",
+    ]
     let deviceName: String
     @State private var section: DeveloperDeviceSection = .controls
 
@@ -813,11 +817,61 @@ private struct BWDeviceSettingsView: View {
 
             switch section {
             case .controls:
-                if controller.isReady {
-                    ControlsView()
-                } else {
-                    BWConnectionView()
+                Form {
+                    if controller.isReady {
+                        ControlsView()
+                    } else {
+                        BWConnectionView()
+                    }
+                    if BowersWilkinsProvider.isOriginalPx8Name(deviceName) {
+                        Section("Equalizer") {
+                            Toggle(
+                                "Enable equalizer",
+                                isOn: Binding(
+                                    get: { settings.hostEQEnabled },
+                                    set: { settings.setHostEQEnabled($0) }
+                                ))
+                            HStack {
+                                switch equalizer.state {
+                                case .off:
+                                    Text("Off")
+                                case .waiting:
+                                    Text("Waiting for the Px8 to be the output")
+                                case .active(let rate):
+                                    Text(
+                                        "Active at \((rate / 1000).formatted(.number.precision(.fractionLength(0...1)))) kHz"
+                                    )
+                                case .failed(let message):
+                                    Text(message)
+                                    Button("Retry") { equalizer.retry() }
+                                }
+                            }
+                            .foregroundStyle(.secondary)
+                            ForEach(bandLabels.indices, id: \.self) { band in
+                                HStack {
+                                    Text(bandLabels[band]).frame(width: 52, alignment: .trailing)
+                                    Slider(
+                                        value: Binding(
+                                            get: { settings.hostEQSettings.gainsDB[band] },
+                                            set: { settings.setHostEQGain(band: band, dB: $0) }
+                                        ), in: -6...6, step: 0.5
+                                    )
+                                    .accessibilityLabel(bandLabels[band])
+                                    Text(String(format: "%+.1f dB", settings.hostEQSettings.gainsDB[band]))
+                                        .frame(width: 64, alignment: .trailing).monospacedDigit()
+                                }
+                            }
+                            Button("Reset to Flat") { settings.setHostEQSettings(.flat) }
+                            if case .active = equalizer.state {
+                                LabeledContent("Automatic level") {
+                                    Text(String(format: "%+.1f dB", equalizer.preGainDB)).monospacedDigit()
+                                }
+                            }
+                        }
+                    }
                 }
+                .formStyle(.grouped)
+                .padding(.vertical, controller.isReady ? 8 : 0)
             case .values:
                 InspectorView()
                     .padding(.horizontal, 18)
@@ -845,7 +899,7 @@ private struct BWConnectionView: View {
     @EnvironmentObject private var controller: BowersWilkinsProvider
 
     var body: some View {
-        Form {
+        Group {
             Section("Connection") {
                 Toggle(
                     "Restore settings on connect",
@@ -888,7 +942,6 @@ private struct BWConnectionView: View {
                 isConnected: controller.isReady
             )
         }
-        .formStyle(.grouped)
     }
 }
 
@@ -1314,7 +1367,7 @@ private struct ControlsView: View {
     private let sleepOptions = [0, 5, 10, 15, 30, 60, 120]
 
     var body: some View {
-        Form {
+        Group {
             Section("Connection") {
                 Toggle(
                     "Restore settings on connect",
@@ -1552,8 +1605,6 @@ private struct ControlsView: View {
                 isConnected: controller.isReady
             )
         }
-        .formStyle(.grouped)
-        .padding(.vertical, 8)
         .disabled(!controller.isReady)
     }
 

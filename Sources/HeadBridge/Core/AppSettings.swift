@@ -37,6 +37,8 @@ final class AppSettings: ObservableObject {
         static let developerMode = "DeveloperModeEnabled"
         static let showsDockIconWithSettings = "ShowsDockIconWithSettings"
         static let launchAtLoginRequested = "LaunchAtLoginRequested"
+        static let hostEQEnabled = "HostEQEnabled"
+        static let hostEQBandGains = "HostEQBandGains"
 
         static func volumeSync(providerID: String) -> String {
             "\(volumeSyncPrefix).\(providerID)"
@@ -62,6 +64,8 @@ final class AppSettings: ObservableObject {
     @Published private(set) var launchAtLoginEnabled = false
     @Published private(set) var launchAtLoginRequiresApproval = false
     @Published private(set) var launchAtLoginError: String?
+    @Published private(set) var hostEQEnabled: Bool
+    @Published private(set) var hostEQSettings: EQSettings
 
     private let defaults: UserDefaults
     private let launchAtLoginLogger = Logger(
@@ -76,6 +80,19 @@ final class AppSettings: ObservableObject {
             .flatMap(BatteryDisplayMode.init(rawValue:)) ?? .always
         developerModeEnabled = defaults.bool(forKey: Key.developerMode)
         showsDockIconWithSettings = defaults.bool(forKey: Key.showsDockIconWithSettings)
+        hostEQEnabled = defaults.bool(forKey: Key.hostEQEnabled)
+        if defaults.object(forKey: Key.hostEQBandGains) == nil {
+            hostEQSettings = .flat
+        } else if let gains = defaults.array(forKey: Key.hostEQBandGains) as? [Double],
+            let validated = EQSettings.validated(gains)
+        {
+            hostEQSettings = validated
+        } else {
+            hostEQSettings = .flat
+            hostEQEnabled = false
+            defaults.set(EQSettings.flat.gainsDB, forKey: Key.hostEQBandGains)
+            defaults.set(false, forKey: Key.hostEQEnabled)
+        }
 
         let status = SMAppService.mainApp.status
         if defaults.object(forKey: Key.launchAtLoginRequested) == nil,
@@ -127,6 +144,26 @@ final class AppSettings: ObservableObject {
     func setLaunchAtLoginEnabled(_ enabled: Bool) {
         defaults.set(enabled, forKey: Key.launchAtLoginRequested)
         reconcileLaunchAtLoginRegistration()
+    }
+
+    func setHostEQEnabled(_ enabled: Bool) {
+        guard hostEQEnabled != enabled else { return }
+        hostEQEnabled = enabled
+        defaults.set(enabled, forKey: Key.hostEQEnabled)
+    }
+
+    func setHostEQGain(band: Int, dB: Double) {
+        guard hostEQSettings.gainsDB.indices.contains(band), dB.isFinite else { return }
+        var gains = hostEQSettings.gainsDB
+        let clamped = min(EQSettings.gainRange.upperBound, max(EQSettings.gainRange.lowerBound, dB))
+        gains[band] = (clamped / EQSettings.gainStep).rounded() * EQSettings.gainStep
+        setHostEQSettings(EQSettings(gainsDB: gains))
+    }
+
+    func setHostEQSettings(_ settings: EQSettings) {
+        guard let validated = EQSettings.validated(settings.gainsDB), validated != hostEQSettings else { return }
+        hostEQSettings = validated
+        defaults.set(validated.gainsDB, forKey: Key.hostEQBandGains)
     }
 
     private func reconcileLaunchAtLoginRegistration() {
