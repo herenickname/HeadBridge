@@ -122,6 +122,7 @@ struct HeadBridgeApp: App {
     @StateObject private var manager: HeadphoneManager
     @StateObject private var bowersWilkins: BowersWilkinsProvider
     @StateObject private var sony: SonyMDRProvider
+    @StateObject private var oppo: OppoProvider
     @StateObject private var systemAudio: SystemAudioController
     @StateObject private var settings: AppSettings
     @StateObject private var updates: UpdateController
@@ -134,19 +135,21 @@ struct HeadBridgeApp: App {
 
         let bowersWilkins = BowersWilkinsProvider()
         let sony = SonyMDRProvider()
+        let oppo = OppoProvider()
         let systemAudio = SystemAudioController()
         let settings = AppSettings()
         let updates = UpdateController()
         bowersWilkins.setDiagnosticsEnabled(settings.developerModeEnabled)
         sony.setDiagnosticsEnabled(settings.developerModeEnabled)
-        let manager = HeadphoneManager(providers: [bowersWilkins, sony])
-        let batteryHistory = BatteryHistoryStore(providers: [bowersWilkins, sony])
+        let manager = HeadphoneManager(providers: [bowersWilkins, sony, oppo])
+        let batteryHistory = BatteryHistoryStore(providers: [bowersWilkins, sony, oppo])
         manager.installAudioDeviceDiscovery(systemAudio: systemAudio)
         manager.installVolumeSynchronization(settings: settings, systemAudio: systemAudio)
 
         _manager = StateObject(wrappedValue: manager)
         _bowersWilkins = StateObject(wrappedValue: bowersWilkins)
         _sony = StateObject(wrappedValue: sony)
+        _oppo = StateObject(wrappedValue: oppo)
         _systemAudio = StateObject(wrappedValue: systemAudio)
         _settings = StateObject(wrappedValue: settings)
         _updates = StateObject(wrappedValue: updates)
@@ -167,10 +170,16 @@ struct HeadBridgeApp: App {
                 .environmentObject(manager)
                 .environmentObject(bowersWilkins)
                 .environmentObject(sony)
+                .environmentObject(oppo)
                 .environmentObject(systemAudio)
                 .environmentObject(settings)
                 .environmentObject(updates)
                 .environmentObject(batteryHistory)
+                .onAppear { applyDockIconPolicy(settingsWindowOpen: true) }
+                .onDisappear { applyDockIconPolicy(settingsWindowOpen: false) }
+                .onChange(of: settings.showsDockIconWithSettings) { _, _ in
+                    applyDockIconPolicy(settingsWindowOpen: true)
+                }
                 .frame(
                     minWidth: 680,
                     idealWidth: 760,
@@ -196,6 +205,7 @@ struct HeadBridgeApp: App {
                 .environmentObject(manager)
                 .environmentObject(bowersWilkins)
                 .environmentObject(sony)
+                .environmentObject(oppo)
                 .environmentObject(systemAudio)
                 .environmentObject(settings)
                 .environmentObject(updates)
@@ -238,5 +248,19 @@ struct HeadBridgeApp: App {
             let battery = provider.batteryPercent
         else { return nil }
         return "\(battery)%"
+    }
+
+    /// Shows a Dock icon while the settings window is open, when the user
+    /// has asked for one; otherwise HeadBridge stays a menu-bar-only app.
+    private func applyDockIconPolicy(settingsWindowOpen: Bool) {
+        let showsIcon = settingsWindowOpen && settings.showsDockIconWithSettings
+        NSApp.setActivationPolicy(showsIcon ? .regular : .accessory)
+        if showsIcon {
+            NSApp.activate(ignoringOtherApps: true)
+        } else if settingsWindowOpen {
+            // Leaving the Dock deactivates the app, which sends the settings
+            // window behind other windows; bring it back to the front.
+            DispatchQueue.main.async { HeadBridgeWindowCoordinator.focusSettingsWindow() }
+        }
     }
 }

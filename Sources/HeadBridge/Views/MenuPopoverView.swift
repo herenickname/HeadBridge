@@ -12,6 +12,9 @@ struct MenuPopoverView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var expandedDeviceID: AudioDeviceID?
     @State private var showsInputDevices = false
+    @State private var optionKeyMonitor: Any?
+    @State private var menuWindow: NSWindow?
+    @State private var contentHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,7 +40,15 @@ struct MenuPopoverView: View {
             footer
         }
         .frame(width: 310)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: PopoverContentHeightKey.self, value: proxy.size.height)
+            }
+        )
+        .onPreferenceChange(PopoverContentHeightKey.self) { contentHeight = $0 }
+        .background(PopoverWindowHeightSync(contentHeight: contentHeight))
         .background(.ultraThinMaterial)
+        .background(MenuWindowReader(window: $menuWindow))
         .onAppear {
             showsInputDevices = NSEvent.modifierFlags.contains(.option)
             expandedDeviceID = nil
@@ -47,7 +58,42 @@ struct MenuPopoverView: View {
             {
                 controller.startScanning()
             }
+            installOptionKeyMonitor()
         }
+        .onDisappear { removeOptionKeyMonitor() }
+        // The menu window can be reused between openings, in which case
+        // `onAppear` does not run again; re-read Option whenever it becomes key.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard isMenuWindow(notification.object) else { return }
+            showsInputDevices = NSEvent.modifierFlags.contains(.option)
+            installOptionKeyMonitor()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
+            guard isMenuWindow(notification.object) else { return }
+            removeOptionKeyMonitor()
+        }
+    }
+
+    private func isMenuWindow(_ object: Any?) -> Bool {
+        guard let menuWindow, let window = object as? NSWindow else { return false }
+        return window === menuWindow
+    }
+
+    /// Reveals the input list when Option is pressed while the menu is already open.
+    private func installOptionKeyMonitor() {
+        guard optionKeyMonitor == nil else { return }
+        optionKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            if event.modifierFlags.contains(.option), menuWindow == nil || event.window === menuWindow {
+                showsInputDevices = true
+            }
+            return event
+        }
+    }
+
+    private func removeOptionKeyMonitor() {
+        guard let optionKeyMonitor else { return }
+        NSEvent.removeMonitor(optionKeyMonitor)
+        self.optionKeyMonitor = nil
     }
 
     private var inputSection: some View {
@@ -315,8 +361,33 @@ struct MenuPopoverView: View {
                 }
             }
 
-            if controller.capabilities.contains(.wearSensor) || controller.capabilities.contains(.voicePrompts) {
+            if controller.supportsToneControls {
                 if controller.capabilities.contains(.noiseControl) || controller.capabilities.contains(.spatialAudio) {
+                    Divider().padding(.horizontal, 14)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Bass and Treble")
+                        .font(.system(size: 13, weight: .semibold))
+                    toneRow(
+                        "Bass",
+                        value: controller.bassLevel,
+                        set: controller.setBassLevel,
+                        commit: controller.commitBass
+                    )
+                    toneRow(
+                        "Treble",
+                        value: controller.trebleLevel,
+                        set: controller.setTrebleLevel,
+                        commit: controller.commitTreble
+                    )
+                }
+                .padding(14)
+            }
+
+            if controller.capabilities.contains(.wearSensor) || controller.capabilities.contains(.voicePrompts) {
+                if controller.capabilities.contains(.noiseControl) || controller.capabilities.contains(.spatialAudio)
+                    || controller.supportsToneControls
+                {
                     Divider().padding(.horizontal, 14)
                 }
                 menuSection("Headphone Controls") {
@@ -607,6 +678,31 @@ struct MenuPopoverView: View {
         .padding(.bottom, 8)
     }
 
+    private func toneRow(
+        _ title: String,
+        value: Int,
+        set: @escaping (Int) -> Void,
+        commit: @escaping () -> Void
+    ) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 13))
+                .frame(width: 44, alignment: .leading)
+            Slider(
+                value: Binding(
+                    get: { Double(value) },
+                    set: { set(Int($0.rounded())) }
+                ),
+                in: -60...60,
+                step: 1,
+                onEditingChanged: { editing in if !editing { commit() } }
+            )
+            Text(String(format: "%+d", value))
+                .monospacedDigit()
+                .frame(width: 34, alignment: .trailing)
+        }
+    }
+
     private func modeRow(_ title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 10) {
@@ -689,6 +785,66 @@ struct MenuPopoverView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+}
+
+/// Hands the menu-bar window to the view so key-window notifications and
+/// key events can be matched against it.
+private struct MenuWindowReader: NSViewRepresentable {
+    @Binding var window: NSWindow?
+
+    func makeNSView(context: Context) -> WindowReportingView {
+        let view = WindowReportingView()
+        view.onWindowChange = { newWindow in
+            DispatchQueue.main.async {
+                if window !== newWindow { window = newWindow }
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ view: WindowReportingView, context: Context) {}
+
+    final class WindowReportingView: NSView {
+        var onWindowChange: ((NSWindow?) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindowChange?(window)
+        }
+    }
+}
+
+private struct PopoverContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// The menu-bar window does not always follow the content when a device's
+/// controls expand, which leaves the content centred and clipped at both
+/// ends. Keep the window as tall as the content, anchored to its top edge.
+private struct PopoverWindowHeightSync: NSViewRepresentable {
+    let contentHeight: CGFloat
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let contentHeight = contentHeight
+        DispatchQueue.main.async {
+            guard let window = view.window, contentHeight > 0 else { return }
+            let chrome = window.frame.height - window.contentLayoutRect.height
+            var target = contentHeight + chrome
+            if let visible = window.screen?.visibleFrame {
+                target = min(target, window.frame.maxY - visible.minY)
+            }
+            guard abs(window.frame.height - target) > 0.5 else { return }
+            var frame = window.frame
+            frame.origin.y = frame.maxY - target
+            frame.size.height = target
+            window.setFrame(frame, display: true)
+        }
     }
 }
 

@@ -102,6 +102,10 @@ enum BWRPCatalog {
     static let eqGet = command(0x04, 0x2A, "5-band EQ")
     static let eqBypassSet = command(0x04, 0x2B, "Set EQ bypass")
     static let eqBypassGet = command(0x04, 0x2C, "EQ bypass")
+    static let bassSet = command(0x04, 0x17, "Set bass")
+    static let bassGet = command(0x04, 0x18, "Bass")
+    static let trebleSet = command(0x04, 0x19, "Set treble")
+    static let trebleGet = command(0x04, 0x1A, "Treble")
     static let wearGet = command(0x0A, 0x01, "Wear sensor")
     static let wearSet = command(0x0A, 0x02, "Set wear sensor")
     static let wearSensitivityGet = command(0x0A, 0x03, "Wear sensitivity")
@@ -124,7 +128,7 @@ enum BWRPCatalog {
     static let chargingStatusGet = command(0x08, 0x0B, "Charging status")
 
     static let primaryReads: [BWRPCCommand] = [
-        ancGet, eqGet, eqBypassGet, wearGet, wearSensitivityGet, sleepGet,
+        ancGet, eqGet, eqBypassGet, bassGet, trebleGet, wearGet, wearSensitivityGet, sleepGet,
         buttonGet, voiceGet, nameGet, spatialEnabledGet, spatialPresetGet,
         batteryPercentageGet, chargingStatusGet,
         command(0x04, 0x0C, "Audio source"),
@@ -156,11 +160,27 @@ enum BWRPCatalog {
 
     private static let allKnown: [BWRPCCommand] =
         explorerReads + [
-            ancSet, eqSet, eqBypassSet, wearSet, wearSensitivitySet, sleepSet,
+            ancSet, eqSet, eqBypassSet, bassSet, trebleSet, wearSet, wearSensitivitySet, sleepSet,
             buttonSet, voiceSet, nameSet, spatialEnabledSet, spatialPresetSet,
             command(0x04, 0x16, "Audio info notification"),
             command(0x02, 0x09, "Sleep notification"), pairedDeviceGet,
         ]
+
+    private static let readBackPairs: [(set: BWRPCCommand, get: BWRPCCommand)] = [
+        (ancSet, ancGet), (eqSet, eqGet), (eqBypassSet, eqBypassGet),
+        (bassSet, bassGet), (trebleSet, trebleGet),
+        (wearSet, wearGet), (wearSensitivitySet, wearSensitivityGet),
+        (sleepSet, sleepGet), (buttonSet, buttonGet), (voiceSet, voiceGet),
+        (nameSet, nameGet),
+        (spatialEnabledSet, spatialEnabledGet), (spatialPresetSet, spatialPresetGet),
+    ]
+
+    /// The read that confirms a setter. A device can answer that read with the
+    /// previous value, or a transient error, until its setter reply has been
+    /// sent, so the confirming read is issued after that reply.
+    static func readBack(forSetKey key: String) -> BWRPCCommand? {
+        readBackPairs.first { $0.set.key == key }?.get
+    }
 
     static func name(namespace: UInt8, id: UInt8) -> String {
         allKnown.first { $0.namespace == namespace && $0.id == id }?.name

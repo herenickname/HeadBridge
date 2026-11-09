@@ -12,6 +12,40 @@ prefilter: HeadBridge scans BLE advertisements, matches the advertised name to
 a connected Core Audio Bluetooth output, connects to that peripheral, and then
 discovers all services and characteristics. It does not assume a service UUID.
 
+Some headphones do not advertise their model name over BLE. The original Px8
+advertises as `LE_BWHP` while Core Audio reports `Px8`, so that generic name is
+accepted as a discovery candidate. It is selected automatically only as a
+fallback when no model-named advertisement matches and a supported Bowers &
+Wilkins Core Audio output is connected, and only after the scan has run for
+two seconds, so that a model-named advertisement arriving later in the same
+scan is not pre-empted. The required characteristics remain
+the compatibility check.
+
+A generic advertisement cannot distinguish two nearby headphones that both
+advertise this way, so the strongest candidate is tried first and checked
+afterwards. The headphone reports its Bluetooth address over RPC (`08:02`),
+and on the original Px8 it equals the paired audio device's address. For a
+generically advertised peripheral HeadBridge compares that address with the
+paired headphones macOS reports as connected and drops the link on a mismatch,
+before any restore profile is applied. When either side is unavailable the
+link is kept.
+
+The original Px8 advertises under a new BLE identifier after every connection,
+so a rejected peripheral cannot be recognised by identifier. Automatic
+connection therefore stops after three consecutive rejections until the audio
+route changes, Bluetooth restarts, or the user connects manually. HeadBridge
+does not yet try the other candidates of the same scan in turn.
+
+The comparison uses the paired-device inventory, which is refreshed in the
+background whenever the Core Audio device list changes. Someone who owns two
+generically advertised headphones and switches between them can therefore be
+compared against a list that still names the previous pair, and have the
+correct headphone dropped once. The next automatic attempt, about five seconds
+later, uses the refreshed list. HeadBridge does not refresh and re-check before
+dropping. The check is
+not applied to model-named advertisements, because the address equality has
+not been confirmed on those models.
+
 The RPC characteristic UUIDs currently used are:
 
 | Direction | Characteristic UUID | Required for readiness |
@@ -83,6 +117,18 @@ the corresponding `GET` after a short delay. The successful `GET` reply is the
 authoritative confirmation. Unsolicited notifications use the same command key
 and pass through the same state mapper when their payload shape is known.
 
+## Setter read-back timing
+
+On the original Px8 a setter is not applied instantly. In a capture of the
+wear-sensor setter (`0A:02`), reads of `0A:01` sent before the setter reply
+arrived returned the previous value, and one returned device error `3`; reads
+sent after the reply returned the new value. HeadBridge therefore issues the
+confirming read when the setter's reply arrives, and a control whose read has
+succeeded once in a session is kept even if a later read returns an error.
+
+The same model sends an unsolicited `03:01` notification with the new ANC value
+when the mode is changed with the button on the headphones.
+
 ## Capability probing
 
 After transport readiness, `BowersWilkinsProvider` sends a fixed set of safe
@@ -97,6 +143,41 @@ nonzero device error; HeadBridge records that result but does not expose the
 capability. The opt-in diagnostics screen can issue a larger read-only probe
 set. Its results must not be promoted to a control until the payload and safe
 value range have been verified on hardware.
+
+## ANC mode values
+
+The ANC mode commands (`03:01` get, `03:02` set) carry one integer, but its
+meaning differs between hardware generations:
+
+| Mode | Px7 S3 | Original Px8 |
+| --- | --- | --- |
+| Off | `0` | `1` |
+| Noise cancellation | `1` | `2` |
+| Pass-through | `2` | `3` |
+
+The original Px8 rejects `0` with device error `6` and acknowledges an out-of-range
+`4` without changing the mode. HeadBridge translates through `ANCWireProfile`.
+The Px8 column is used only when the device was discovered under the generic
+`LE_BWHP` name and the single connected Bowers & Wilkins Core Audio output is
+named `Px8`. For any other generically advertised model the values are
+unverified, so noise control stays hidden and no ANC value is written. Public
+sources list other mappings for older models (for example off/low/high/auto);
+add a profile only after confirming the values on that hardware.
+
+## Bass and treble
+
+Headphones without the five-band EQ expose a two-band tone control instead:
+
+| Setting | Get | Set | MessagePack payload |
+| --- | --- | --- | --- |
+| Bass | `04:18` | `04:17` | Integer, `-60` through `60` |
+| Treble | `04:1A` | `04:19` | Integer, `-60` through `60` |
+
+On the original Px8 both setters reply with device error `0` and read back the
+written value, including negative values; `61` is rejected with device error
+`8`. The unit is reported elsewhere as tenths of a decibel but has not been
+measured, so HeadBridge shows the raw value. The controls appear only when both
+reads succeed.
 
 ## Safety boundaries
 
@@ -117,7 +198,28 @@ values should remain diagnostics rather than writable settings.
 ## Hardware status
 
 The transport, primary queries, and exposed controls are hardware-validated on
-Bowers & Wilkins Px7 S3 firmware `3.17.4.17`. Recent PX/PI names are accepted as
+Bowers & Wilkins Px7 S3 firmware `3.17.4.17`.
+
+The original Px8 (RPC software version `0(20.0.2.0)`) is validated with the
+exceptions below. Discovery under the generic advertised name, automatic
+connection, reconnect after a power cycle, restore-on-connect, and all three
+ANC modes were confirmed on hardware, as were the wear sensor, quick-action
+button, voice prompts, and bass and treble. The quick-action button read
+(`08:2B`) replies with a boolean on this model and the integer write is
+accepted. Battery, charging, local-name, version, and serial reads reply with
+device error `0`.
+
+- Wear sensitivity: values `1` and `3` are accepted and read back, but no
+  difference was observed between them, and which end is the more sensitive is
+  unconfirmed on this model. The control is left visible.
+- Standby timer: writes read back correctly; the timer was not left to expire.
+- Local name: writing it was not exercised, so renaming is hidden for
+  generically advertised models. On those models the Core Audio name also
+  selects the ANC wire profile.
+- The five-band EQ, EQ bypass, and spatial-audio reads return device error `1`,
+  so those controls stay hidden.
+
+Recent PX/PI names are accepted as
 discovery candidates, but other models have not yet been verified. Their actual
 compatibility must be established by characteristic discovery, successful
 command replies, and a device-support report containing the exact model,

@@ -1,11 +1,14 @@
+import AppKit
 import Charts
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject private var manager: HeadphoneManager
     @EnvironmentObject private var controller: BowersWilkinsProvider
     @EnvironmentObject private var sony: SonyMDRProvider
+    @EnvironmentObject private var oppo: OppoProvider
     @EnvironmentObject private var settings: AppSettings
     @State private var selection: SettingsDestination = .general
 
@@ -57,6 +60,8 @@ struct ContentView: View {
                 BWDeviceSettingsView(deviceName: device.name)
             } else if device.providerID == sony.providerID {
                 SonyDeviceSettingsView(deviceName: device.name)
+            } else if device.providerID == oppo.providerID {
+                OppoDeviceSettingsView(deviceName: device.name)
             } else {
                 GenericProviderSettingsView(provider: provider, deviceName: device.name)
             }
@@ -82,8 +87,13 @@ struct HeadphoneProviderSidebarSnapshot: Equatable {
         name = device.name
         vendor = device.vendorName
 
+        // Bowers & Wilkins identifies the device as "mac:<address>"; the
+        // paired-device inventory uses the bare address.
+        let activeID = provider.connectedDeviceID?.lowercased()
+        let pairedID = device.deviceID.lowercased()
         let representsActiveDevice =
-            provider.connectedDeviceID?.lowercased() == device.deviceID.lowercased()
+            activeID == pairedID
+            || activeID == "mac:\(pairedID)"
             || BluetoothDeviceNameMatcher.matches(provider.connectedName, device.name)
         state = representsActiveDevice ? provider.connectionState : .idle
         battery = state == .ready ? provider.batteryPercent : nil
@@ -293,6 +303,14 @@ private struct GeneralSettingsView: View {
                 .pickerStyle(.radioGroup)
             }
 
+            Section("Dock") {
+                Toggle(isOn: $settings.showsDockIconWithSettings) {
+                    Text("Show in Dock while settings are open")
+                    Text("Also adds HeadBridge to Command-Tab while the window is open.")
+                }
+                .toggleStyle(.switch)
+            }
+
             Section("Startup") {
                 Toggle(
                     "Launch HeadBridge at login",
@@ -361,7 +379,7 @@ private struct GeneralSettingsView: View {
     }
 }
 
-private struct DeviceDetailHeader<Actions: View>: View {
+struct DeviceDetailHeader<Actions: View>: View {
     let name: String
     let vendor: String
     let state: HeadphoneConnectionState
@@ -426,7 +444,7 @@ private struct DeviceDetailHeader<Actions: View>: View {
     }
 }
 
-private struct BatteryHistorySection: View {
+struct BatteryHistorySection: View {
     @EnvironmentObject private var batteryHistory: BatteryHistoryStore
 
     let providerID: String
@@ -1379,6 +1397,23 @@ private struct ControlsView: View {
                 }
             }
 
+            if controller.supportsToneControls {
+                Section("Bass and Treble") {
+                    toneSlider(
+                        "Bass",
+                        value: controller.bassLevel,
+                        set: controller.setBassLevel,
+                        commit: controller.commitBass
+                    )
+                    toneSlider(
+                        "Treble",
+                        value: controller.trebleLevel,
+                        set: controller.setTrebleLevel,
+                        commit: controller.commitTreble
+                    )
+                }
+            }
+
             if controller.capabilities.contains(.wearSensor) || controller.capabilities.contains(.standbyTimer)
                 || controller.capabilities.contains(.customButton) || controller.capabilities.contains(.voicePrompts)
             {
@@ -1522,6 +1557,30 @@ private struct ControlsView: View {
         .disabled(!controller.isReady)
     }
 
+    private func toneSlider(
+        _ title: String,
+        value: Int,
+        set: @escaping (Int) -> Void,
+        commit: @escaping () -> Void
+    ) -> some View {
+        LabeledContent(title) {
+            HStack {
+                Slider(
+                    value: Binding(
+                        get: { Double(value) },
+                        set: { set(Int($0.rounded())) }
+                    ),
+                    in: -60...60,
+                    step: 1,
+                    onEditingChanged: { editing in if !editing { commit() } }
+                )
+                Text(String(format: "%+d", value))
+                    .monospacedDigit()
+                    .frame(width: 38, alignment: .trailing)
+            }
+        }
+    }
+
     private func infoRow(_ name: String, _ value: String) -> some View {
         LabeledContent(name) { Text(value).textSelection(.enabled).foregroundStyle(.secondary) }
     }
@@ -1606,12 +1665,65 @@ private struct ProtocolTransportLogView: View {
                                     ? .green : entry.direction == .outgoing ? .blue : .secondary
                             )
                             .frame(width: 34, alignment: .leading)
-                        Text(entry.time, style: .time).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        Text(TransportLogEntry.timeFormatter.string(from: entry.time))
+                            .font(.caption.monospaced()).foregroundStyle(.secondary)
                         Text(entry.text).font(.caption.monospaced()).textSelection(.enabled)
                     }
                 }
             }
         }
         .padding(.vertical, 12)
+        .contextMenu {
+            Button("Copy Log", action: copyLog).disabled(entries.isEmpty)
+            Button("Save Log…", action: saveLog).disabled(entries.isEmpty)
+        }
+        .toolbar {
+            ToolbarItem {
+                Menu {
+                    Button("Copy Log", action: copyLog)
+                    Button("Save Log…", action: saveLog)
+                } label: {
+                    Label("Export Log", systemImage: "square.and.arrow.up")
+                }
+                .help("Copy or save the log")
+                .disabled(entries.isEmpty)
+            }
+        }
+    }
+
+    private func copyLog() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(TransportLogEntry.exportText(entries), forType: .string)
+    }
+
+    /// Writes the log to a file the user picks. It can contain serial
+    /// numbers and Bluetooth addresses, so only the owner can read it.
+    private func saveLog() {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = "HeadBridge-log-\(formatter.string(from: Date())).txt"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Self.writeOwnerOnly(TransportLogEntry.exportText(entries), to: url)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    /// Creates the file with owner-only permissions from the start, so its
+    /// contents are never readable by other users. The save panel has
+    /// already confirmed replacing an existing file.
+    private static func writeOwnerOnly(_ text: String, to url: URL) throws {
+        try? FileManager.default.removeItem(at: url)
+        let descriptor = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        try handle.write(contentsOf: Data(text.utf8))
+        try handle.close()
     }
 }

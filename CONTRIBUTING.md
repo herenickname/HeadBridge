@@ -104,8 +104,9 @@ implementation code is not.
 
 Current fact-oriented contributor references are the
 [`Bowers & Wilkins RPC notes`](docs/BowersWilkinsRPC.md),
-[`Sony MDR V1 notes`](docs/SonyMDRV1.md), and
-[`Sony MDR V2 adapter notes`](docs/SonyMDRV2.md).
+[`Sony MDR V1 notes`](docs/SonyMDRV1.md),
+[`Sony MDR V2 adapter notes`](docs/SonyMDRV2.md), and
+[`OPPO Enco RFCOMM notes`](docs/OppoRFCOMM.md).
 
 ## Tests and hardware verification
 

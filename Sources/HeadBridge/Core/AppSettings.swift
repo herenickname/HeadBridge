@@ -35,6 +35,7 @@ final class AppSettings: ObservableObject {
         static let legacySonyVolumeSync = "SonyVolumeSync"
         static let volumeSyncPrefix = "VolumeSyncEnabled"
         static let developerMode = "DeveloperModeEnabled"
+        static let showsDockIconWithSettings = "ShowsDockIconWithSettings"
         static let launchAtLoginRequested = "LaunchAtLoginRequested"
 
         static func volumeSync(providerID: String) -> String {
@@ -50,6 +51,12 @@ final class AppSettings: ObservableObject {
 
     @Published var developerModeEnabled: Bool {
         didSet { defaults.set(developerModeEnabled, forKey: Key.developerMode) }
+    }
+
+    /// HeadBridge is a menu-bar app; this adds a Dock icon (and a Command-Tab
+    /// entry) only while its settings window is open.
+    @Published var showsDockIconWithSettings: Bool {
+        didSet { defaults.set(showsDockIconWithSettings, forKey: Key.showsDockIconWithSettings) }
     }
 
     @Published private(set) var launchAtLoginEnabled = false
@@ -68,6 +75,7 @@ final class AppSettings: ObservableObject {
             defaults.string(forKey: Key.batteryDisplayMode)
             .flatMap(BatteryDisplayMode.init(rawValue:)) ?? .always
         developerModeEnabled = defaults.bool(forKey: Key.developerMode)
+        showsDockIconWithSettings = defaults.bool(forKey: Key.showsDockIconWithSettings)
 
         let status = SMAppService.mainApp.status
         if defaults.object(forKey: Key.launchAtLoginRequested) == nil,
