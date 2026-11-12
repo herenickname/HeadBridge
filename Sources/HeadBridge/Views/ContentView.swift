@@ -247,7 +247,12 @@ private struct GenericProviderSettingsView: View {
                             }
                         }
                     }
-                    if let mode = hator.noiseMode {
+                    if hator.capabilities.contains(.equalizer) {
+                        Section("Equalizer") {
+                            HatorEqualizerEditor(provider: hator)
+                        }
+                    }
+                    if let mode = hator.noiseMode, !hator.capabilities.contains(.noiseControl) {
                         Section("Noise Control") {
                             LabeledContent("Current mode", value: mode.title)
                         }
@@ -287,6 +292,14 @@ private struct GenericProviderSettingsView: View {
                     if let codec = provider.codecName {
                         LabeledContent("Codec") { Text(codec).foregroundStyle(.secondary) }
                     }
+                    if let hator = provider as? HatorProvider {
+                        if let volume = hator.deviceVolumeRaw {
+                            LabeledContent("Headset volume (raw)", value: String(volume))
+                        }
+                        if let preset = hator.equalizerPresets.first(where: { $0.id == hator.equalizer?.mode }) {
+                            LabeledContent("EQ preset", value: preset.title)
+                        }
+                    }
                 }
 
                 BatteryHistorySection(
@@ -301,6 +314,95 @@ private struct GenericProviderSettingsView: View {
             .padding(.vertical, 8)
         }
         .navigationTitle(provider.vendorName)
+    }
+}
+
+@MainActor
+private struct HatorEqualizerEditor: View {
+    @ObservedObject var provider: HatorProvider
+    @State private var draft: [Double] = Array(repeating: 0, count: 10)
+    @State private var hasEdits = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker(
+                "Preset",
+                selection: Binding(
+                    get: { provider.equalizer?.mode ?? 0 },
+                    set: { provider.setEqualizerPreset($0) }
+                )
+            ) {
+                ForEach(provider.equalizerPresets) { preset in
+                    Text(preset.title).tag(preset.id)
+                }
+            }
+
+            Text("Custom EQ · 10 bands")
+                .font(.subheadline.weight(.semibold))
+            ForEach(HatorDSP.frequencies.indices, id: \.self) { index in
+                HStack(spacing: 10) {
+                    Text("\(HatorDSP.frequencies[index]) Hz")
+                        .font(.caption)
+                        .frame(width: 69, alignment: .leading)
+                    Slider(
+                        value: Binding(
+                            get: {
+                                min(
+                                    Double(HatorDSP.editableRange.upperBound),
+                                    max(Double(HatorDSP.editableRange.lowerBound), draft[index]))
+                            },
+                            set: {
+                                draft[index] = $0; hasEdits = true
+                            }
+                        ), in: Double(HatorDSP.editableRange.lowerBound)...Double(HatorDSP.editableRange.upperBound),
+                        step: 1)
+                    Text(String(format: "%+d", Int(draft[index])))
+                        .monospacedDigit()
+                        .font(.caption)
+                        .frame(width: 32, alignment: .trailing)
+                }
+            }
+            HStack {
+                Button("Apply Custom EQ") {
+                    provider.setCustomEqualizer(draft.map { Int($0) })
+                    hasEdits = false
+                }
+                .disabled(
+                    provider.connectionState != .ready || !hasEdits
+                        || !draft.allSatisfy({ HatorDSP.editableRange.contains(Int($0)) }))
+                Button("Discard edits") { syncDraft() }
+                    .disabled(!hasEdits)
+            }
+            if draft.contains(where: { !HatorDSP.editableRange.contains(Int($0)) }) {
+                Text(
+                    "Stored gains outside the currently tested editing range are preserved. Adjust those bands before applying changes."
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+            Text(
+                "Settings are confirmed by a fresh device read. EQ effect through USB audio has not yet been verified."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .onAppear(perform: syncDraft)
+        .onChange(of: provider.equalizerPresets) { _, _ in
+            if !hasEdits { syncDraft() }
+        }
+        .onChange(of: provider.equalizer) { _, _ in
+            if !hasEdits { syncDraft() }
+        }
+    }
+
+    private func syncDraft() {
+        let values =
+            provider.equalizer?.mode == 8
+            ? provider.equalizer?.gains
+            : provider.equalizerPresets.first(where: { $0.id == 8 })?.gains
+        draft = (values?.count == 10 ? values ?? [] : Array(repeating: 0, count: 10))
+            .map(Double.init)
+        hasEdits = false
     }
 }
 

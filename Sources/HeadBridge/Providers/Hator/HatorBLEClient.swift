@@ -1,10 +1,16 @@
 import CoreBluetooth
 import Foundation
 import JavaScriptCore
+import OSLog
 
 struct HatorDeviceSnapshot {
     var fields: [UInt8: [UInt8]] = [:]
     var vendor: [UInt8: UInt8] = [:]
+
+    var rawVolume: Int? { fields[0x01]?.first.map(Int.init) }
+    var equalizer: HatorEqualizerState? { HatorDSP.eqState(fields[0x04]) }
+    var equalizerPresets: [HatorEqualizerPreset] { HatorDSP.eqPresets(fields[0x0C]) }
+    var supportedNoiseModes: [HeadphoneNoiseMode] { HatorDSP.availableANC(fields[0x0E]) }
 
     var batteryPercent: Int? {
         guard let value = fields[0x00]?.first, value <= 100 else { return nil }
@@ -28,6 +34,36 @@ struct HatorDeviceSnapshot {
     }
 }
 
+enum HatorSystemWrite: Equatable {
+    case noise(HeadphoneNoiseMode)
+    case preset(UInt8)
+    case customEQ([Int])
+
+    var key: UInt8 {
+        switch self {
+        case .noise: return 0x0D
+        case .preset, .customEQ: return 0x04
+        }
+    }
+
+    func packet(sequence: UInt8) -> [UInt8]? {
+        switch self {
+        case .noise(let mode): return HatorDSP.noiseControl(mode, sequence: sequence)
+        case .preset(let mode): return HatorDSP.equalizerPreset(mode, sequence: sequence)
+        case .customEQ(let gains): return HatorDSP.customEqualizer(gains, sequence: sequence)
+        }
+    }
+
+    func matches(_ fields: [UInt8: [UInt8]]) -> Bool {
+        switch self {
+        case .noise(let mode): return fields[0x0D]?.first == UInt8(mode.rawValue)
+        case .preset(let mode): return HatorDSP.eqState(fields[0x04])?.mode == mode
+        case .customEQ(let gains):
+            return HatorDSP.eqState(fields[0x04]) == HatorEqualizerState(mode: 8, gains: gains)
+        }
+    }
+}
+
 /// Single-owner BLE transport for Phoenix 2. All delegate events are delivered on the main queue.
 final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     static func shouldVerifyOnAck(code: UInt8) -> Bool { code != 0x02 }
@@ -35,6 +71,7 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     var onConnection: ((HeadphoneConnectionState) -> Void)?
     var onSnapshot: ((HatorDeviceSnapshot) -> Void)?
     var onVerifiedWrite: ((UInt8, UInt8, Bool) -> Void)?
+    var onVerifiedSystemWrite: ((HatorSystemWrite, Bool) -> Void)?
     var connectedIdentifier: UUID? { hasReadySession ? peripheral?.identifier : nil }
     var spatialWritesAllowed = false
 
@@ -46,9 +83,10 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     private enum Phase: Equatable {
         case idle, scanning, connecting, discovering
         case authDevice, authChallenge, authConfirmation
-        case targetInfo, systemInfo, vendorRead, ready, writing, verifyWrite, retrying
+        case targetInfo, systemInfo, vendorRead, ready, writing, verifyWrite, verifySystemWrite, retrying
     }
 
+    private let logger = Logger(subsystem: "io.github.herenickname.HeadBridge", category: "HatorBLE")
     private let serviceUUID = CBUUID(string: "AE00")
     private let txUUID = CBUUID(string: "AE01")
     private let rxUUID = CBUUID(string: "AE02")
@@ -68,6 +106,8 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     private var desiredWrites: [UInt8: UInt8] = [:]
     private var writeOrder: [UInt8] = []
     private var activeWrite: (code: UInt8, value: UInt8)?
+    private var queuedSystemWrites: [HatorSystemWrite] = []
+    private var activeSystemWrite: HatorSystemWrite?
     private var generation = 0
     private var retryCount = 0
     private var isStarted = false
@@ -79,6 +119,9 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     private var hasReadySession = false
 
     func start() {
+        logger.notice(
+            "BLE start requested started=\(self.isStarted) shutdown=\(self.isShutdown) state=\(self.central?.state.rawValue ?? -1)"
+        )
         guard !isShutdown, !isStarted else { return }
         isStarted = true
         guard loadAuth() else {
@@ -88,8 +131,13 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         }
         if central == nil {
             central = CBCentralManager(delegate: self, queue: .main)
+            if let central { reportPendingBluetoothPermission(for: central) }
         } else if central?.state == .poweredOn {
             beginConnect()
+        } else if let central, central.state == .unknown {
+            reportPendingBluetoothPermission(for: central)
+        } else if central?.state == .unauthorized || central?.state == .unsupported {
+            onConnection?(.failed("Bluetooth access is unavailable in System Settings"))
         }
     }
 
@@ -107,6 +155,8 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         desiredWrites.removeAll()
         writeOrder.removeAll()
         activeWrite = nil
+        activeSystemWrite = nil
+        queuedSystemWrites.removeAll()
         phase = .idle
         hasReadySession = false
         needsRefresh = false
@@ -129,6 +179,15 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     /// Only three independently verified reversible vendor controls.
+    func setSystem(_ command: HatorSystemWrite) {
+        guard isStarted, hasReadySession, command.packet(sequence: 0) != nil else { return }
+        // Coalesce repeated slider changes and rapid ANC mode clicks.
+        queuedSystemWrites.removeAll(where: { $0.key == command.key })
+        guard queuedSystemWrites.count < 3 else { return }
+        queuedSystemWrites.append(command)
+        processWritesIfReady()
+    }
+
     func setVendor(_ code: UInt8, value: UInt8) {
         guard isStarted, [0x02, 0x05, 0x08].contains(code),
             code != 0x02 || spatialWritesAllowed
@@ -143,6 +202,19 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         }
         desiredWrites[code] = value
         processWritesIfReady()
+    }
+
+    private func reportPendingBluetoothPermission(for manager: CBCentralManager) {
+        let token = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self, weak manager] in
+            guard let self, let manager, self.isStarted, !self.isShutdown,
+                self.central === manager, manager.state == .unknown,
+                self.generation == token
+            else { return }
+            self.logger.warning("CoreBluetooth still reports unknown; verify Bluetooth permission for this build")
+            self.onConnection?(.failed("Check HeadBridge Bluetooth access in System Settings"))
+            // Keep the manager alive: macOS may deliver poweredOn after consent.
+        }
     }
 
     private func loadAuth() -> Bool {
@@ -180,6 +252,7 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     private func beginConnect() {
+        logger.notice("BLE beginConnect state=\(self.central?.state.rawValue ?? -1)")
         guard isStarted, !isShutdown, central?.state == .poweredOn else { return }
         generation &+= 1
         let token = generation
@@ -191,6 +264,8 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         tx = nil
         snapshot = HatorDeviceSnapshot()
         activeWrite = nil
+        activeSystemWrite = nil
+        queuedSystemWrites.removeAll()
         peripheral = nil
         attemptedCached = false
 
@@ -219,6 +294,7 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     private func retry() {
+        logger.notice("BLE retry phase=\(String(describing: self.phase), privacy: .public) count=\(self.retryCount)")
         guard isStarted, !isShutdown, phase != .retrying else { return }
         if attemptedCached { scanOnNextAttempt = true }
         retryCount = min(retryCount + 1, 6)
@@ -234,6 +310,8 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         parser.reset()
         snapshot = HatorDeviceSnapshot()
         activeWrite = nil
+        activeSystemWrite = nil
+        queuedSystemWrites.removeAll()
         desiredWrites.removeAll()
         writeOrder.removeAll()
         hasReadySession = false
@@ -333,6 +411,23 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
             requestSystemInfo()
             return
         }
+        if !queuedSystemWrites.isEmpty {
+            let command = queuedSystemWrites.removeFirst()
+            guard let packet = command.packet(sequence: nextSequence()) else { return }
+            activeSystemWrite = command
+            phase = .writing
+            requestSequence = sequence
+            send(packet)
+            let token = generation
+            let expected = requestSequence
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) { [weak self] in
+                guard let self, self.generation == token, self.phase == .writing,
+                    self.requestSequence == expected, self.activeSystemWrite != nil
+                else { return }
+                self.verifyActiveSystemWrite()
+            }
+            return
+        }
         guard !writeOrder.isEmpty else { return }
         let code = writeOrder.removeFirst()
         guard let value = desiredWrites.removeValue(forKey: code) else { return }
@@ -372,6 +467,29 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         }
     }
 
+    private func verifyActiveSystemWrite() {
+        guard activeSystemWrite != nil else { return }
+        phase = .verifySystemWrite
+        requestSequence = nextSequence()
+        send(HatorRCSP.systemInfo(sequence: requestSequence))
+        let token = generation
+        let expected = requestSequence
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.generation == token, self.phase == .verifySystemWrite,
+                self.requestSequence == expected
+            else { return }
+            self.completeSystemWrite(confirmed: false)
+        }
+    }
+
+    private func completeSystemWrite(confirmed: Bool) {
+        guard let command = activeSystemWrite else { return }
+        activeSystemWrite = nil
+        phase = .ready
+        onVerifiedSystemWrite?(command, confirmed)
+        processWritesIfReady()
+    }
+
     private func completeWrite(confirmed: Bool, readback: UInt8?) {
         guard let activeWrite else { return }
         if let readback { snapshot.vendor[activeWrite.code] = readback }
@@ -383,6 +501,9 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        logger.notice(
+            "BLE central state=\(central.state.rawValue) started=\(self.isStarted) phase=\(String(describing: self.phase), privacy: .public)"
+        )
         guard isStarted else { return }
         if central.state == .poweredOn, phase == .idle || phase == .retrying {
             beginConnect()
@@ -490,6 +611,20 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     private func handle(_ frame: HatorRCSPFrame) {
+        if frame.isCommand, frame.opcode == 0x09 {
+            if frame.requiresAcknowledgement {
+                send(HatorRCSP.acknowledge(opcode: 0x09, sequence: frame.sequence))
+            }
+            // Device-originated updates must not displace an in-flight GET/SET.
+            // Merge just the reported fields, preserving the other state.
+            if let changes = HatorRCSP.systemFields(frame.parameters),
+                !changes.isEmpty
+            {
+                snapshot.fields.merge(changes) { _, update in update }
+                if hasReadySession { onSnapshot?(snapshot) }
+            }
+            return
+        }
         if frame.isCommand, frame.opcode == 0xFF, frame.parameters.count == 2 {
             send(HatorRCSP.acknowledgeVendor(sequence: frame.sequence))
             let code = frame.parameters[0]
@@ -526,7 +661,10 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
             vendorIndex = 0
             requestNextVendor()
         case .writing:
-            if frame.opcode == 0xFF, frame.sequence == requestSequence, frame.status == 0,
+            guard frame.sequence == requestSequence else { return }
+            if let _ = activeSystemWrite, frame.opcode == 0x08 {
+                if frame.status == 0 { verifyActiveSystemWrite() } else { completeSystemWrite(confirmed: false) }
+            } else if frame.opcode == 0xFF, frame.status == 0,
                 activeWrite.map({ Self.shouldVerifyOnAck(code: $0.code) }) == true
             {
                 // Spatial ON may need calibration before a fresh GET confirms
@@ -534,6 +672,16 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
                 // the delayed verification scheduled for that command.
                 verifyActiveWrite()
             }
+        case .verifySystemWrite:
+            guard frame.opcode == 0x07, frame.sequence == requestSequence else { return }
+            guard frame.status == 0, let changes = HatorRCSP.systemFields(frame.parameters) else {
+                completeSystemWrite(confirmed: false)
+                return
+            }
+            let verified = activeSystemWrite?.matches(changes) == true
+            snapshot.fields.merge(changes) { _, update in update }
+            onSnapshot?(snapshot)
+            completeSystemWrite(confirmed: verified)
         default: break
         }
     }

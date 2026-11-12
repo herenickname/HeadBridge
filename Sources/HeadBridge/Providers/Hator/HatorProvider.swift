@@ -6,9 +6,13 @@ private struct HatorRestoreProfile: Codable {
     var spatial: Bool?
     var rgb: Bool?
     var microphoneMuted: Bool?
+    var noiseMode: Int?
+    var equalizerPreset: UInt8?
+    var customEqualizer: [Int]?
 
     var isEmpty: Bool {
         spatial == nil && rgb == nil && microphoneMuted == nil
+            && noiseMode == nil && equalizerPreset == nil && customEqualizer == nil
     }
 }
 
@@ -24,6 +28,10 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     @Published private(set) var isCharging: Bool?
     @Published private(set) var codecName: String?
     @Published private(set) var noiseMode: HeadphoneNoiseMode?
+    @Published private(set) var supportedNoiseModes: [HeadphoneNoiseMode] = []
+    @Published private(set) var equalizer: HatorEqualizerState?
+    @Published private(set) var equalizerPresets: [HatorEqualizerPreset] = []
+    @Published private(set) var deviceVolumeRaw: Int?
     @Published private(set) var capabilities: HeadphoneCapabilities = []
     @Published private(set) var spatialEnabled: Bool?
     @Published private(set) var rgbEnabled: Bool?
@@ -32,7 +40,6 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     @Published private(set) var restoreOnConnectEnabled = false
 
     var connectedDeviceID: String? { deviceUUID?.uuidString }
-    var supportedNoiseModes: [HeadphoneNoiseMode] { [] }
     var connectionStatePublisher: AnyPublisher<HeadphoneConnectionState, Never> {
         $connectionState.eraseToAnyPublisher()
     }
@@ -45,6 +52,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     private var hardwareCapabilities: HeadphoneCapabilities = []
     private var storedProfile: HatorRestoreProfile = .init()
     private var pendingRestoreCodes: Set<UInt8> = []
+    private var pendingRestoreSystem: Set<UInt8> = []
 
     init() {
         restoreOnConnectEnabled = HeadphoneProfileStore.isRestoreEnabled(for: providerID)
@@ -56,6 +64,9 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         }
         client.onVerifiedWrite = { [weak self] code, value, verified in
             Task { @MainActor [weak self] in self?.didVerifyWrite(code: code, value: value, verified: verified) }
+        }
+        client.onVerifiedSystemWrite = { [weak self] command, verified in
+            Task { @MainActor [weak self] in self?.didVerifySystemWrite(command, verified: verified) }
         }
     }
 
@@ -137,11 +148,39 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         client.onConnection = nil
         client.onSnapshot = nil
         client.onVerifiedWrite = nil
+        client.onVerifiedSystemWrite = nil
         clearState()
     }
 
-    /// ANC is currently read-only: no independently verified setter is implemented.
-    func setNoiseMode(_ mode: HeadphoneNoiseMode) {}
+    func setNoiseMode(_ mode: HeadphoneNoiseMode) {
+        guard connectionState == .ready, capabilities.contains(.noiseControl),
+            supportedNoiseModes.contains(mode), noiseMode != nil
+        else { return }
+        client.setSystem(.noise(mode))
+    }
+
+    func setEqualizerPreset(_ mode: UInt8) {
+        guard connectionState == .ready, capabilities.contains(.equalizer),
+            equalizerPresets.contains(where: { $0.id == mode })
+        else { return }
+        if mode == 8 {
+            // A preset switch must not silently overwrite the saved Custom bands.
+            guard let customPreset = equalizerPresets.first(where: { $0.id == 8 }) else { return }
+            let gains = customPreset.gains
+            guard gains.count == 10, gains.allSatisfy(HatorDSP.editableRange.contains) else { return }
+            client.setSystem(.customEQ(gains))
+        } else {
+            client.setSystem(.preset(mode))
+        }
+    }
+
+    func setCustomEqualizer(_ values: [Int]) {
+        guard connectionState == .ready, capabilities.contains(.equalizer),
+            equalizerPresets.contains(where: { $0.id == 8 }), values.count == 10,
+            values.allSatisfy(HatorDSP.editableRange.contains)
+        else { return }
+        client.setSystem(.customEQ(values))
+    }
 
     func setDeviceVolume(normalized: Float) {}
 
@@ -196,6 +235,23 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
                 pendingRestoreCodes.insert(0x08)
                 setMicrophoneMuted(mute)
             }
+            if let raw = storedProfile.noiseMode, let mode = HeadphoneNoiseMode(rawValue: raw),
+                supportedNoiseModes.contains(mode)
+            {
+                pendingRestoreSystem.insert(0x0D)
+                setNoiseMode(mode)
+            }
+            if let mode = storedProfile.equalizerPreset, equalizer != nil,
+                equalizerPresets.contains(where: { $0.id == mode })
+            {
+                if mode == 8, let values = storedProfile.customEqualizer {
+                    pendingRestoreSystem.insert(0x04)
+                    setCustomEqualizer(values)
+                } else if mode != 8 {
+                    pendingRestoreSystem.insert(0x04)
+                    setEqualizerPreset(mode)
+                }
+            }
         }
     }
 
@@ -203,12 +259,18 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         guard hasAudioOutput, client.connectedIdentifier != nil else { return }
         batteryPercent = snapshot.batteryPercent
         noiseMode = snapshot.noiseMode
+        supportedNoiseModes = snapshot.supportedNoiseModes
+        equalizer = snapshot.equalizer
+        equalizerPresets = snapshot.equalizerPresets
+        deviceVolumeRaw = snapshot.rawVolume
         spatialEnabled = snapshot.vendorBool(0x02)
         rgbEnabled = snapshot.vendorBool(0x05)
         microphoneMuted = snapshot.vendorBool(0x08)
         hardwareCapabilities = []
         if batteryPercent != nil { hardwareCapabilities.insert(.battery) }
         if spatialEnabled != nil { hardwareCapabilities.insert(.spatialAudio) }
+        if noiseMode != nil && !supportedNoiseModes.isEmpty { hardwareCapabilities.insert(.noiseControl) }
+        if equalizer != nil && equalizerPresets.count == 9 { hardwareCapabilities.insert(.equalizer) }
         updateEffectiveCapabilities()
         logger.notice(
             "BLE state read batteryAvailable=\(self.batteryPercent != nil) spatialAvailable=\(self.spatialEnabled != nil) rgb=\(String(describing: self.rgbEnabled), privacy: .public) micAvailable=\(self.microphoneMuted != nil)"
@@ -228,6 +290,21 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         HeadphoneProfileStore.save(storedProfile, providerID: providerID, deviceID: connectedDeviceID)
     }
 
+    private func didVerifySystemWrite(_ command: HatorSystemWrite, verified: Bool) {
+        logger.notice("BLE system write verification type=\(command.key) confirmed=\(verified)")
+        let wasRestore = pendingRestoreSystem.remove(command.key) != nil
+        guard verified, !wasRestore, let connectedDeviceID else { return }
+        switch command {
+        case .noise(let mode): storedProfile.noiseMode = mode.rawValue
+        case .preset(let mode):
+            storedProfile.equalizerPreset = mode
+        case .customEQ(let gains):
+            storedProfile.equalizerPreset = 8
+            storedProfile.customEqualizer = gains
+        }
+        HeadphoneProfileStore.save(storedProfile, providerID: providerID, deviceID: connectedDeviceID)
+    }
+
     private func updateEffectiveCapabilities() {
         capabilities = HatorAudioRoute.effectiveCapabilities(hardwareCapabilities, route: audioRoute)
     }
@@ -237,6 +314,10 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         isCharging = nil
         codecName = nil
         noiseMode = nil
+        supportedNoiseModes = []
+        equalizer = nil
+        equalizerPresets = []
+        deviceVolumeRaw = nil
         spatialEnabled = nil
         rgbEnabled = nil
         microphoneMuted = nil
@@ -244,6 +325,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         capabilities = []
         deviceUUID = nil
         pendingRestoreCodes.removeAll()
+        pendingRestoreSystem.removeAll()
     }
 
     private func clearState() {

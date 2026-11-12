@@ -82,7 +82,7 @@ Use **HeadBridge Settings… → Check for Updates…** for in-app updates, or r
 | Other Sony MDR V1 models | Not yet tested | Experimental common controls |
 | OPPO Enco RFCOMM | Enco Air5s, firmware `163.163.102` | Battery, noise control, spatial audio, game mode, and EQ validated on contributor hardware |
 | Sony MDR V2 / Link2 | Service generation is detected | Not supported yet |
-| HATOR Phoenix 2 Wireless (JieLi RCSP over BLE) | HeadBridge BLE connected and controlled RGB/mic mute with 2.4 GHz dongle selected; Bluetooth Spatial not yet tested | Experimental: battery, RGB, mic mute, Bluetooth-only Spatial Audio; ANC state read-only |
+| HATOR Phoenix 2 Wireless (JieLi RCSP over BLE) | HeadBridge verified ANC, RGB/microphone controls and custom/preset EQ SET/GET with USB audio selected; Bluetooth Spatial not yet tested | Experimental: ANC/Transparency, 9 EQ presets, 10-band Custom EQ, battery, RGB, microphone mute and Bluetooth-only Spatial Audio |
 
 Firmware updates can change behavior. Please include the exact model, firmware, macOS version, and working/broken controls in a [device-support report](.github/ISSUE_TEMPLATE/device_support.yml).
 
@@ -188,7 +188,7 @@ Only the Air5s write table is verified; other OPPO Enco models are recognized an
 
 ### HATOR Phoenix 2 Wireless (experimental)
 
-The initial HATOR provider uses one authenticated BLE control connection with either Bluetooth audio or the verified Jieli USB 2.4 GHz dongle connected. The headset's Spatial Audio setting is **available only when the selected audio output is Bluetooth** and is hidden and blocked for the USB-dongle output. Battery and ANC state are read-only; independently verified RGB and microphone-mute commands use GET readback. Firmware, OTA, dongle HID writes, EQ editing and ANC setters are **not implemented**. HeadBridge has been tested against a Phoenix 2 on the USB-dongle audio route (BLE auth, battery/status, RGB and microphone-mute roundtrips, app restart); Bluetooth-audio Spatial and physical disconnect/reconnect are still untested. See [implementation notes](docs/HatorPhoenix2.md).
+HATOR Phoenix 2 Wireless uses one authenticated BLE control connection for both Bluetooth audio and the verified JieLi USB 2.4 GHz dongle. It supports ANC/Transparency/Off, nine EQ presets and a ten-band Custom EQ editor, battery status, read-only headset volume, RGB and microphone mute; all writes are followed by readback. The headset's Spatial Audio setting is **available only when Bluetooth is the selected audio output** and is hidden and blocked for the USB dongle. ANC/EQ and RGB/microphone commands have been tested on physical headphones with USB audio selected. The custom editor initially limits changes to a conservative ±12 per band; the acoustic effect of EQ through the dongle has not been independently established. Bluetooth-audio Spatial, hardware power cycles and dongle removal/reinsertion still need testing. USB HID writes and firmware updates are not implemented. See [implementation notes](docs/HatorPhoenix2.md).
 
 ## Known limitations
 

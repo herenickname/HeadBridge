@@ -1,6 +1,6 @@
 # HATOR Phoenix 2 Wireless — provider integration notes
 
-Status: **experimental HeadBridge implementation; partially validated on physical hardware**. On 2026-11-12 (headset firmware `V0.0.116`), HeadBridge connected over BLE with 2.4 GHz USB audio active, read battery, Spatial, RGB and microphone state, and verified RGB and microphone-mute writes with live readback. App relaunch/reconnect was successful. Bluetooth-audio Spatial switching, radio loss, full power cycles and dongle unplug/replug still need hardware testing.
+Status: **experimental HeadBridge implementation; partially validated on physical hardware**. On 2026-11-12 (headset firmware `V0.0.116`), HeadBridge connected over BLE with 2.4 GHz USB audio active, read battery, ANC, EQ, Spatial, RGB and microphone state, and verified ANC, EQ, RGB and microphone-mute writes with readback. Bluetooth-audio Spatial switching, physical radio loss, full power cycles and dongle unplug/replug still require hardware testing.
 
 ## Audio output is not the control transport
 
@@ -37,6 +37,10 @@ Other controls (ANC, EQ, RGB, microphone mute, battery) must be exposed only whe
 - **PASS:** In-app Disconnect released BLE and cleared UI state; in-app Refresh reconnected and read the headset again. Periodic state updates were observed roughly every 30 seconds without overlapping poll bursts.
 - **OBSERVED:** One transient Not connected state occurred during rapid rebuild/relaunch testing. The separate CLI still connected correctly; the following controlled HeadBridge launch and two consecutive relaunches were successful. Root cause not established, so this is not a stress-test pass.
 - **PASS:** generic settings view correctly updates observed controls after BLE readback (UI observation fix).
+- **PASS:** direct ANC SET and verified GET with USB dongle selected; all three advertised modes are discovered dynamically from SYS_INFO field `0E`. The mode was subsequently changed through the UI, so no forced ANC restoration was performed.
+- **PASS:** nine EQ presets decoded from SYS_INFO field `0C`; Custom mode applied with a +1 adjustment to 400 Hz and verified with a fresh GET (field `04`). Custom 400 Hz was returned to zero and the original Normal preset reselected, with both restorations confirmed. Preset labels follow the nine-position EQ Settings grid in the installed HATOR SyncHUB application (Normal, Shooters, Rock, Movie, Action, Hip-Hop/Rap, EDM, Sport, Custom); the editor currently allows conservative ±12 gains.
+- **IMPLEMENTED, HARDWARE CONFIRMATION PENDING:** device-initiated SYS_INFO_AUTO_UPDATE (`0x09`) is parsed, acknowledged when required, and merged into the current state without disrupting an in-flight transaction. Frame handling has regression tests; physical button-originated updates have not yet been independently confirmed.
+- **OBSERVED:** the ad-hoc local build could remain in CoreBluetooth state `unknown` after a rebuild despite the Bluetooth permission showing enabled. Re-enabling HeadBridge access in macOS System Settings → Privacy & Security → Bluetooth restored connection. Local development uses ad-hoc signing when the project's self-signed release identity is not installed; rebuilding can therefore require reauthorization.
 - **NOT TESTED:** Bluetooth audio route and Spatial write; macOS currently exposes only the 2.4 GHz USB audio output for this headset. Do not force a route that does not exist.
 - **NOT TESTED:** physical device power cycle, dongle removal/reinsert, real radio loss, long-running reconnection under all failure paths.
 

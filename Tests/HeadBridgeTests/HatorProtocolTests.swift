@@ -35,6 +35,94 @@ final class HatorProtocolTests: XCTestCase {
         XCTAssertLessThan(HatorBLEClient.verificationDelay(for: 0x05), 1)
     }
 
+    func testNoiseAndEqualizerCommandBytes() throws {
+        let anc = try XCTUnwrap(HatorDSP.noiseControl(.noiseCancellation, sequence: 0x52))
+        XCTAssertEqual(
+            anc,
+            [
+                0xFE, 0xDC, 0xBA, 0xC0, 0x08, 0x00, 0x0D, 0x52,
+                0xFF, 0x0A, 0x0D, 0x01, 0x40, 0, 0, 0, 0x40, 0, 0, 0, 0xEF,
+            ])
+        XCTAssertNil(HatorDSP.noiseControl(.windReduction, sequence: 1))
+
+        let preset = try XCTUnwrap(HatorDSP.equalizerPreset(1, sequence: 0x37))
+        XCTAssertEqual(
+            preset,
+            HatorRCSP.command(
+                opcode: 0x08, sequence: 0x37,
+                parameters: [0xFF, 0x02, 0x04, 0x01]
+                    + Array(repeating: 0, count: 10)))
+        XCTAssertNil(HatorDSP.equalizerPreset(9, sequence: 0x37))
+        let values = [0, -12, 5, 1, 0, 0, 0, 0, 0, 12]
+        let custom = try XCTUnwrap(HatorDSP.customEqualizer(values, sequence: 0x38))
+        XCTAssertEqual(
+            custom,
+            HatorRCSP.command(
+                opcode: 0x08, sequence: 0x38,
+                parameters: [
+                    0xFF, 0x0C, 0x04, 0x08,
+                    0, 0xF4, 5, 1, 0, 0, 0, 0, 0, 12,
+                ]))
+        XCTAssertNil(HatorDSP.customEqualizer(Array(repeating: 0, count: 9), sequence: 1))
+        XCTAssertNil(HatorDSP.customEqualizer(Array(repeating: 13, count: 10), sequence: 1))
+    }
+
+    func testEqualizerDeviceFieldsAndModeValidation() {
+        let header: [UInt8] = [
+            0x0A, 0x00, 0x47, 0x00, 0xAA, 0x01, 0xF4, 0x01, 0xF4,
+            0x17, 0x70, 0x0B, 0x54, 0x12, 0xC0, 0x13, 0x88, 0x27,
+            0x10, 0x54, 0x5F,
+        ]
+        let rows = (0..<9).flatMap { i -> [UInt8] in
+            [UInt8(i)]
+                + (0..<10).map { j -> UInt8 in
+                    UInt8(bitPattern: Int8(i == 1 && j == 1 ? -16 : 0))
+                }
+        }
+        let presets = HatorDSP.eqPresets(header + rows)
+        XCTAssertEqual(presets.count, 9)
+        XCTAssertEqual(
+            presets.map(\.title),
+            [
+                "Normal", "Shooters", "Rock", "Movie", "Action", "Hip-Hop/Rap", "EDM", "Sport", "Custom",
+            ])
+        XCTAssertEqual(presets[1].gains[1], -16)  // raw device value, not UI clamp
+        XCTAssertTrue(HatorDSP.eqPresets(Array(repeating: 0, count: 120)).isEmpty)
+        XCTAssertTrue(HatorDSP.eqPresets(Array(repeating: 0, count: 119)).isEmpty)
+        XCTAssertEqual(HatorDSP.eqState([0x08] + [0xF4] + Array(repeating: 0, count: 9))?.gains.first, -12)
+        XCTAssertNil(HatorDSP.eqState([0x09] + Array(repeating: 0, count: 10)))
+        XCTAssertNil(HatorDSP.eqState([0x08]))
+    }
+
+    func testANCDiscoveryValidatesAllModes() {
+        let records = (0..<3).flatMap { [UInt8($0)] + Array(repeating: UInt8(0), count: 8) }
+        XCTAssertEqual(HatorDSP.availableANC([3] + records), [.off, .noiseCancellation, .ambient])
+        XCTAssertTrue(HatorDSP.availableANC([3] + Array(records.dropLast())).isEmpty)
+        XCTAssertTrue(HatorDSP.availableANC([0]).isEmpty)
+        XCTAssertTrue(HatorDSP.availableANC([2] + Array(repeating: 0, count: 18)).isEmpty)
+    }
+
+    func testSystemNotifyFramesAndReadbackValidation() {
+        let update: [UInt8] = [
+            0xFE, 0xDC, 0xBA, 0xC0, 0x09, 0, 5, 0x4D,
+            0xFF, 0x02, 0x0D, 0x01, 0xEF,
+        ]
+        let frame = HatorRCSP.decode(update)
+        XCTAssertEqual(frame?.opcode, 0x09)
+        XCTAssertEqual(frame?.sequence, 0x4D)
+        XCTAssertEqual(frame?.requiresAcknowledgement, true)
+        XCTAssertEqual(HatorRCSP.systemFields(frame?.parameters ?? [])?[0x0D], [1])
+        XCTAssertEqual(
+            HatorRCSP.acknowledge(opcode: 0x09, sequence: 0x4D),
+            [0xFE, 0xDC, 0xBA, 0, 0x09, 0, 2, 0, 0x4D, 0xEF])
+        XCTAssertTrue(HatorSystemWrite.noise(.noiseCancellation).matches([0x0D: [1]]))
+        XCTAssertFalse(HatorSystemWrite.noise(.noiseCancellation).matches([0x0D: [2]]))
+        XCTAssertTrue(HatorSystemWrite.preset(1).matches([0x04: [1] + Array(repeating: 0, count: 10)]))
+        XCTAssertFalse(
+            HatorSystemWrite.customEQ(Array(repeating: 0, count: 10))
+                .matches([0x04: [8, 1] + Array(repeating: 0, count: 9)]))
+    }
+
     func testSplittingAndCoalescing() {
         let reply: [UInt8] = [0xFE, 0xDC, 0xBA, 0xC0, 0xFF, 0x00, 0x03, 0x71, 0x02, 0x02, 0xEF]
         var parser = HatorRCSPParser()

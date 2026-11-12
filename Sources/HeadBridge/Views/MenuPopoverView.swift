@@ -427,6 +427,29 @@ struct MenuPopoverView: View {
 
     private var hatorControls: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if hator.capabilities.contains(.noiseControl) {
+                menuSection("Noise Control") {
+                    ForEach(hator.supportedNoiseModes) { mode in
+                        modeRow(mode.title, icon: mode.icon, selected: hator.noiseMode == mode) {
+                            hator.setNoiseMode(mode)
+                        }
+                    }
+                }
+            }
+            if hator.capabilities.contains(.equalizer) {
+                menuSection("Equalizer") {
+                    SelectionPopoverRow(
+                        "EQ Preset",
+                        value: hator.equalizerPresets.first(where: { $0.id == hator.equalizer?.mode })?.title ?? "—",
+                        icon: "slider.horizontal.3",
+                        options: hator.equalizerPresets,
+                        selected: hator.equalizerPresets.first(where: { $0.id == hator.equalizer?.mode }),
+                        optionTitle: { $0.title },
+                        footer: "Edit the 10-band Custom EQ in HeadBridge Settings",
+                        onSelect: { hator.setEqualizerPreset($0.id) }
+                    )
+                }
+            }
             if hator.capabilities.contains(.spatialAudio), let spatial = hator.spatialEnabled {
                 menuSection("Spatial Audio") {
                     toggleRow("Spatial Audio", icon: "waveform", isOn: spatial, action: hator.setSpatialAudio)

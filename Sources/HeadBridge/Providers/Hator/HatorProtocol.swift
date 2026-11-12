@@ -32,6 +32,7 @@ enum HatorAudioRoute: Equatable {
 
 struct HatorRCSPFrame: Equatable {
     let isCommand: Bool
+    let requiresAcknowledgement: Bool
     let opcode: UInt8
     let sequence: UInt8
     let status: UInt8?
@@ -69,7 +70,11 @@ enum HatorRCSP {
     }
 
     static func acknowledgeVendor(sequence: UInt8) -> [UInt8] {
-        [0xFE, 0xDC, 0xBA, 0x00, 0xFF, 0x00, 0x02, 0x00, sequence, 0xEF]
+        acknowledge(opcode: 0xFF, sequence: sequence)
+    }
+
+    static func acknowledge(opcode: UInt8, sequence: UInt8) -> [UInt8] {
+        [0xFE, 0xDC, 0xBA, 0x00, opcode, 0x00, 0x02, 0x00, sequence, 0xEF]
     }
 
     static func decode(_ bytes: [UInt8]) -> HatorRCSPFrame? {
@@ -82,13 +87,13 @@ enum HatorRCSP {
         let isCommand = bytes[3] & 0x80 != 0
         if isCommand {
             return HatorRCSPFrame(
-                isCommand: true, opcode: bytes[4],
+                isCommand: true, requiresAcknowledgement: bytes[3] & 0x40 != 0, opcode: bytes[4],
                 sequence: bytes[7], status: nil,
                 parameters: Array(bytes[8..<(bytes.count - 1)]))
         }
         guard bytes.count >= 10 else { return nil }
         return HatorRCSPFrame(
-            isCommand: false, opcode: bytes[4],
+            isCommand: false, requiresAcknowledgement: false, opcode: bytes[4],
             sequence: bytes[8], status: bytes[7],
             parameters: Array(bytes[9..<(bytes.count - 1)]))
     }
@@ -144,5 +149,98 @@ struct HatorRCSPParser {
             }
         }
         return frames
+    }
+}
+
+/// Preset IDs are sourced from JieLi SYS_INFO_GET; titles correspond to the
+/// nine positions shown in HATOR SyncHUB's EQ Settings grid.
+struct HatorEqualizerPreset: Equatable, Identifiable {
+    let id: UInt8
+    let gains: [Int]
+
+    var title: String {
+        switch id {
+        case 0: return "Normal"
+        case 1: return "Shooters"
+        case 2: return "Rock"
+        case 3: return "Movie"
+        case 4: return "Action"
+        case 5: return "Hip-Hop/Rap"
+        case 6: return "EDM"
+        case 7: return "Sport"
+        case 8: return "Custom"
+        default: return "Preset \(id)"
+        }
+    }
+}
+
+struct HatorEqualizerState: Equatable {
+    let mode: UInt8
+    let gains: [Int]
+}
+
+/// Audio DSP commands use standard SYS_INFO_SET opcode 08. The 10 data
+/// bytes after the preset selector are present even for a preset change.
+enum HatorDSP {
+    static let frequencies = [31, 71, 145, 400, 800, 1400, 2100, 2900, 4800, 10000]
+    static let editableRange = -12...12
+
+    static func eqState(_ bytes: [UInt8]?) -> HatorEqualizerState? {
+        guard let bytes, bytes.count == 11, bytes[0] <= 8 else { return nil }
+        return HatorEqualizerState(mode: bytes[0], gains: bytes.dropFirst().map { Int(Int8(bitPattern: $0)) })
+    }
+
+    static func eqPresets(_ bytes: [UInt8]?) -> [HatorEqualizerPreset] {
+        guard let bytes, bytes.count == 120 else { return [] }
+        let headerSize = 21
+        let presetSize = 11
+        let raw = (0..<9).map { i -> HatorEqualizerPreset in
+            let offset = headerSize + i * presetSize
+            return HatorEqualizerPreset(
+                id: bytes[offset],
+                gains: bytes[(offset + 1)..<(offset + presetSize)].map { Int(Int8(bitPattern: $0)) }
+            )
+        }
+        guard raw.map(\.id) == Array(UInt8(0)...UInt8(8)) else { return [] }
+        return raw
+    }
+
+    static func availableANC(_ bytes: [UInt8]?) -> [HeadphoneNoiseMode] {
+        guard let bytes, let count = bytes.first.map(Int.init), count > 0,
+            count <= 8, bytes.count == 1 + count * 9
+        else { return [] }
+        let modes = (0..<count).compactMap { index -> HeadphoneNoiseMode? in
+            switch bytes[1 + index * 9] {
+            case 0: return .off
+            case 1: return .noiseCancellation
+            case 2: return .ambient
+            default: return nil
+            }
+        }
+        guard modes.count == count, Set(modes.map(\.rawValue)).count == count else { return [] }
+        return modes
+    }
+
+    static func noiseControl(_ mode: HeadphoneNoiseMode, sequence: UInt8) -> [UInt8]? {
+        guard [.off, .noiseCancellation, .ambient].contains(mode) else { return nil }
+        let parameters: [UInt8] = [
+            0xFF, 0x0A, 0x0D, UInt8(mode.rawValue),
+            0x40, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+        ]
+        return HatorRCSP.command(opcode: 0x08, sequence: sequence, parameters: parameters)
+    }
+
+    static func equalizerPreset(_ preset: UInt8, sequence: UInt8) -> [UInt8]? {
+        guard preset <= 8 else { return nil }
+        return HatorRCSP.command(
+            opcode: 0x08, sequence: sequence,
+            parameters: [0xFF, 0x02, 0x04, preset] + Array(repeating: 0, count: 10))
+    }
+
+    static func customEqualizer(_ gains: [Int], sequence: UInt8) -> [UInt8]? {
+        guard gains.count == 10, gains.allSatisfy(editableRange.contains) else { return nil }
+        return HatorRCSP.command(
+            opcode: 0x08, sequence: sequence,
+            parameters: [0xFF, 0x0C, 0x04, 0x08] + gains.map { UInt8(bitPattern: Int8($0)) })
     }
 }
