@@ -57,6 +57,8 @@ output matches the provider's connected device.
 
 Capabilities must come from the connected device whenever its protocol exposes discovery. Do not advertise a control merely because another model from the same vendor supports it. Keep destructive commands and firmware update paths out of the default UI.
 
+For multi-radio headphones, distinguish supported **device capabilities** from **effective capabilities for the selected audio output**. Control transport and audio transport need not be the same: a single BLE control session may serve Bluetooth audio or a 2.4 GHz USB audio output. Associate outputs with the same verified physical device, but gate controls whose effects are audio-route-specific in Settings, menu bar, Control Center, restore logic, and command dispatch. In particular, do not assume a BLE control that ACKs will affect USB audio. See the [HATOR Phoenix 2 Wireless integration notes](HatorPhoenix2.md) for a concrete requirement: headset Spatial Audio is unavailable when USB-dongle audio is selected.
+
 Restore profiles are provider-owned `Codable` values keyed by provider ID and a stable device ID (Bluetooth address or persistent peripheral UUID). Save settings selected through HeadBridge, not the initial values read during a reconnect: otherwise a phone's temporary changes would overwrite the profile before it could be restored. Apply the saved profile only after the provider's initial state queries have completed.
 
 ## Transport lifecycle

@@ -6,6 +6,7 @@ struct MenuPopoverView: View {
     @EnvironmentObject private var manager: HeadphoneManager
     @EnvironmentObject private var controller: BowersWilkinsProvider
     @EnvironmentObject private var sony: SonyMDRProvider
+    @EnvironmentObject private var hator: HatorProvider
     @EnvironmentObject private var systemAudio: SystemAudioController
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.openWindow) private var openWindow
@@ -419,7 +420,30 @@ struct MenuPopoverView: View {
             bowersWilkinsControls
         } else if provider.providerID == sony.providerID {
             sonyControls
+        } else if provider.providerID == hator.providerID {
+            hatorControls
         }
+    }
+
+    private var hatorControls: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if hator.capabilities.contains(.spatialAudio), let spatial = hator.spatialEnabled {
+                menuSection("Spatial Audio") {
+                    toggleRow("Spatial Audio", icon: "waveform", isOn: spatial, action: hator.setSpatialAudio)
+                }
+            }
+            if let rgb = hator.rgbEnabled {
+                menuSection("Headset Lighting") {
+                    toggleRow("RGB lighting", icon: "lightbulb", isOn: rgb, action: hator.setRGB)
+                }
+            }
+            if let muted = hator.microphoneMuted {
+                menuSection("Microphone") {
+                    toggleRow("Mute microphone", icon: "mic.slash", isOn: muted, action: hator.setMicrophoneMuted)
+                }
+            }
+        }
+        .background(expandedControlsSurface)
     }
 
     private var sonyControls: some View {

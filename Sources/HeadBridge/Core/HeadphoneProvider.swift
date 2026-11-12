@@ -182,6 +182,8 @@ protocol HeadphoneProvider: AnyObject {
     func updateBluetoothPairedDevices(_ devices: [BluetoothPairedDevice])
     func matches(audioDevice: SystemAudioDevice) -> Bool
     func updateAudioConnectedDevices(_ devices: [SystemAudioDevice])
+    func updateActiveAudioDevice(_ device: SystemAudioDevice?)
+    func recognizesExternalAudioDevice(_ device: SystemAudioDevice) -> Bool
     func refresh()
     func refreshBatteryStatus()
     func disconnect()
@@ -197,6 +199,8 @@ extension HeadphoneProvider {
 
     func recognizesBluetoothDevice(named name: String) -> Bool { false }
     func updateBluetoothPairedDevices(_ devices: [BluetoothPairedDevice]) {}
+    func updateActiveAudioDevice(_ device: SystemAudioDevice?) {}
+    func recognizesExternalAudioDevice(_ device: SystemAudioDevice) -> Bool { false }
     func setDeviceVolume(normalized: Float) {}
     func refreshBatteryStatus() {}
     func shutdown() { disconnect() }

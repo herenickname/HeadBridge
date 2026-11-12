@@ -7,6 +7,16 @@ signed software updates. Sparkle and its bundled third-party components are
 distributed under the terms reproduced in
 [`Resources/Licenses/Sparkle-LICENSE.txt`](Resources/Licenses/Sparkle-LICENSE.txt).
 
+## HATOR JieLi authentication implementation
+
+HeadBridge includes a JavaScript bundle generated from the MIT-licensed
+[JieLi authentication implementation by Felix Herbst](https://github.com/hybridherbst/web-bluetooth-e87)
+(Copyright 2026 Felix Herbst). It is used only for the Phoenix 2 mutual
+challenge-response over Bluetooth LE, through JavaScriptCore. The license is
+reproduced in [`Resources/Licenses/JieLiAuth-MIT-LICENSE.txt`](Resources/Licenses/JieLiAuth-MIT-LICENSE.txt).
+No HATOR firmware, signing material, proprietary app code, or packet captures
+are included.
+
 ## Protocol research
 
 HeadBridge does not vendor or link a third-party headphone protocol client. Its

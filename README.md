@@ -4,7 +4,7 @@
   <img src="assets/branding/headbridge-icon.png" width="128" alt="HeadBridge app icon">
 </p>
 
-HeadBridge brings AirPods-style system controls to third-party Bluetooth headphones on macOS. It is a native menu-bar app with independently implemented providers for recent Bowers & Wilkins RPC devices, Sony MDR V1 headphones, and OPPO Enco earbuds.
+HeadBridge brings AirPods-style system controls to third-party Bluetooth headphones on macOS. It is a native menu-bar app with independently implemented providers for recent Bowers & Wilkins RPC devices, Sony MDR V1 headphones, OPPO Enco earbuds, and experimental HATOR Phoenix 2 Wireless support.
 
 [![CI](https://github.com/herenickname/HeadBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/herenickname/HeadBridge/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/herenickname/HeadBridge?display_name=tag)](https://github.com/herenickname/HeadBridge/releases/latest)
@@ -82,6 +82,7 @@ Use **HeadBridge Settings… → Check for Updates…** for in-app updates, or r
 | Other Sony MDR V1 models | Not yet tested | Experimental common controls |
 | OPPO Enco RFCOMM | Enco Air5s, firmware `163.163.102` | Battery, noise control, spatial audio, game mode, and EQ validated on contributor hardware |
 | Sony MDR V2 / Link2 | Service generation is detected | Not supported yet |
+| HATOR Phoenix 2 Wireless (JieLi RCSP over BLE) | HeadBridge BLE connected and controlled RGB/mic mute with 2.4 GHz dongle selected; Bluetooth Spatial not yet tested | Experimental: battery, RGB, mic mute, Bluetooth-only Spatial Audio; ANC state read-only |
 
 Firmware updates can change behavior. Please include the exact model, firmware, macOS version, and working/broken controls in a [device-support report](.github/ISSUE_TEMPLATE/device_support.yml).
 
@@ -184,6 +185,10 @@ The OPPO stack uses the buds' Bluetooth Classic RFCOMM control service with boun
 - restore-on-connect profiles, disconnect/reconnect, and stale-state cleanup.
 
 Only the Air5s write table is verified; other OPPO Enco models are recognized and show battery but hide noise control until their bits are confirmed on hardware. See the [OPPO Enco RFCOMM wire notes](docs/OppoRFCOMM.md).
+
+### HATOR Phoenix 2 Wireless (experimental)
+
+The initial HATOR provider uses one authenticated BLE control connection with either Bluetooth audio or the verified Jieli USB 2.4 GHz dongle connected. The headset's Spatial Audio setting is **available only when the selected audio output is Bluetooth** and is hidden and blocked for the USB-dongle output. Battery and ANC state are read-only; independently verified RGB and microphone-mute commands use GET readback. Firmware, OTA, dongle HID writes, EQ editing and ANC setters are **not implemented**. HeadBridge has been tested against a Phoenix 2 on the USB-dongle audio route (BLE auth, battery/status, RGB and microphone-mute roundtrips, app restart); Bluetooth-audio Spatial and physical disconnect/reconnect are still untested. See [implementation notes](docs/HatorPhoenix2.md).
 
 ## Known limitations
 

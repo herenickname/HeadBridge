@@ -64,6 +64,7 @@ struct ContentView: View {
                 OppoDeviceSettingsView(deviceName: device.name)
             } else {
                 GenericProviderSettingsView(provider: provider, deviceName: device.name)
+                    .id(device.id)
             }
         } else {
             ContentUnavailableView("Headphones unavailable", systemImage: "headphones")
@@ -151,9 +152,31 @@ private struct HeadphoneDeviceSidebarRow: View {
     }
 }
 
-private struct GenericProviderSettingsView: View {
+/// Existential providers are not directly observable by SwiftUI. Forward the
+/// concrete provider's changes so generic controls display confirmed readback.
+@MainActor
+private final class GenericProviderSettingsObserver: ObservableObject {
     let provider: any HeadphoneProvider
+    private var subscription: AnyCancellable?
+
+    init(provider: any HeadphoneProvider) {
+        self.provider = provider
+        subscription = provider.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.objectWillChange.send() }
+    }
+}
+
+private struct GenericProviderSettingsView: View {
+    @StateObject private var observer: GenericProviderSettingsObserver
     let deviceName: String
+
+    init(provider: any HeadphoneProvider, deviceName: String) {
+        _observer = StateObject(wrappedValue: GenericProviderSettingsObserver(provider: provider))
+        self.deviceName = deviceName
+    }
+
+    private var provider: any HeadphoneProvider { observer.provider }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -191,6 +214,44 @@ private struct GenericProviderSettingsView: View {
                     Text("Reapplies this Mac's saved profile after the control connection is ready.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+
+                if let hator = provider as? HatorProvider {
+                    if hator.capabilities.contains(.spatialAudio), let spatial = hator.spatialEnabled {
+                        Section("Spatial Audio") {
+                            Toggle(
+                                "Spatial Audio",
+                                isOn: Binding(
+                                    get: { hator.spatialEnabled ?? spatial },
+                                    set: { hator.setSpatialAudio($0) }
+                                ))
+                        }
+                    }
+                    if hator.rgbEnabled != nil || hator.microphoneMuted != nil {
+                        Section("Headset Controls") {
+                            if let rgb = hator.rgbEnabled {
+                                Toggle(
+                                    "RGB lighting",
+                                    isOn: Binding(
+                                        get: { hator.rgbEnabled ?? rgb },
+                                        set: { hator.setRGB($0) }
+                                    ))
+                            }
+                            if let muted = hator.microphoneMuted {
+                                Toggle(
+                                    "Mute microphone",
+                                    isOn: Binding(
+                                        get: { hator.microphoneMuted ?? muted },
+                                        set: { hator.setMicrophoneMuted($0) }
+                                    ))
+                            }
+                        }
+                    }
+                    if let mode = hator.noiseMode {
+                        Section("Noise Control") {
+                            LabeledContent("Current mode", value: mode.title)
+                        }
+                    }
                 }
 
                 if provider.capabilities.contains(.noiseControl) {
