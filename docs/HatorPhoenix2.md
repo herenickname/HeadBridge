@@ -33,7 +33,9 @@ Other controls (ANC, EQ, RGB, microphone mute, battery) must be exposed only whe
 - **PASS:** 2.4 GHz dongle recognized as active USB audio output; a single authenticated BLE session independently connected while USB audio remained selected.
 - **PASS:** live battery/status and RGB/microphone-mute readbacks; RGB OFF → ON → OFF and microphone muted → unmuted → muted with verified BLE SET/GET. Original headset settings were restored.
 - **PASS:** Spatial Audio absent from USB-dongle Settings, with setter additionally gated by the selected audio route.
-- **PASS:** HeadBridge quit/relaunch reestablished BLE and reread the headset. With Restore on Connect temporarily enabled, original RGB/microphone states remained intact. The preference was returned to OFF. This did **not** prove reapplication of a differing saved state.
+- **PASS:** HeadBridge quit/relaunch reestablished BLE and reread the headset. Two additional consecutive relaunches connected within seven seconds. With Restore on Connect temporarily enabled, original RGB/microphone states remained intact. The preference was returned to OFF. This did **not** prove reapplication of a differing saved state.
+- **PASS:** In-app Disconnect released BLE and cleared UI state; in-app Refresh reconnected and read the headset again. Periodic state updates were observed roughly every 30 seconds without overlapping poll bursts.
+- **OBSERVED:** One transient Not connected state occurred during rapid rebuild/relaunch testing. The separate CLI still connected correctly; the following controlled HeadBridge launch and two consecutive relaunches were successful. Root cause not established, so this is not a stress-test pass.
 - **PASS:** generic settings view correctly updates observed controls after BLE readback (UI observation fix).
 - **NOT TESTED:** Bluetooth audio route and Spatial write; macOS currently exposes only the 2.4 GHz USB audio output for this headset. Do not force a route that does not exist.
 - **NOT TESTED:** physical device power cycle, dongle removal/reinsert, real radio loss, long-running reconnection under all failure paths.
