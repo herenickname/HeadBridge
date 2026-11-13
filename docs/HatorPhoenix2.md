@@ -54,15 +54,37 @@ Bluetooth A2DP codec nor the proprietary 2.4 GHz airlink encoding. The
 hardware supports Bluetooth SBC/AAC/LDAC; macOS codec negotiation remains
 unverified. No user-facing codec selector is provided.
 
-**Live validation, 2026-11-13:** In-app dongle → Bluetooth selection
-immediately updated the UI, disabled duplicate submissions while pending,
-confirmed vendor `07 00` readback in the app logs and automatically selected
-the Bluetooth Core Audio output. Independent CLI experiments verified both
-radio directions and restoration; non-HATOR output retention was observed
-as necessary because macOS reselected Bluetooth after previously choosing
-Mac mini Speakers. The reverse switch and non-HATOR retention through the
-new app UI remain pending dedicated end-to-end verification. Additional USB-C
-tests are deferred.
+**Live validation, 2026-11-13:** The final HeadBridge UI was tested
+in both directions (dongle → Bluetooth and Bluetooth → dongle) with the
+headset initially selected as the Mac's output. Each action immediately
+updated the selector, disabled it while pending, confirmed the new
+physical transport with readback, and the Mac's default output followed
+to the appropriate HATOR device. After each verification the selector
+became enabled again.
+
+With **Mac mini Speakers** explicitly selected instead, the same two
+in-app radio changes succeeded without moving the system output away
+from the speakers; this was checked 4 and 10 seconds after each switch,
+and the speaker output was independently confirmed through macOS.
+The original 2.4 GHz headset mode and USB-dongle Mac default output were
+restored after the tests.
+
+Separate CLI experiments had established that macOS *can* spontaneously
+select the Bluetooth HATOR output after reconnecting, so the in-app guard
+remains necessary even when macOS does not spontaneously reproduce it.
+A controlled simulation during an in-app Bluetooth → dongle change
+(force-selecting the USB HATOR output while Mac mini Speakers had been the
+previous default) confirmed that HeadBridge promptly switched the Mac's
+output back to the speakers and kept it there after the handoff settled.
+This simulated system auto-selection is **not** evidence that macOS itself
+changed the default during that specific run. Separately, when the audio
+output was left untouched, both in-app radio directions retained Mac mini
+Speakers at four and ten seconds. Final headset mode and Mac default were
+restored to 2.4 GHz USB dongle.
+
+Longer reconnects, actual user-initiated output changes mid-transition,
+physical power loss, dongle unplug/replug and wired USB-C mode have not
+yet been tested.
 
 ## Context-dependent capabilities
 
