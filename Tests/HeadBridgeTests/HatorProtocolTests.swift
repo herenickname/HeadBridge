@@ -33,7 +33,8 @@ final class HatorProtocolTests: XCTestCase {
         let dongle = SystemAudioDevice(
             id: 102,
             uid: "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:demo:1",
-            name: "HATOR PHOENIX 2", transportType: kAudioDeviceTransportTypeUSB
+            name: "HATOR PHOENIX 2", transportType: kAudioDeviceTransportTypeUSB,
+            usbDeviceClass: 0x00
         )
         let unrelated = SystemAudioDevice(
             id: 103, uid: "GenericUSB", name: "HATOR PHOENIX 2",
@@ -51,6 +52,42 @@ final class HatorProtocolTests: XCTestCase {
         XCTAssertFalse(HatorRadioMode.dongle.isAvailable(with: [unrelated]))
         XCTAssertTrue(HatorRadioMode.dongle.isAvailable(with: [dongle]))
         XCTAssertTrue(HatorRadioMode.dongle.isAvailable(with: [bluetooth, dongle]))
+    }
+
+    func testWiredUSBAudioIsNotMisidentifiedAs2Point4GHzReceiver() {
+        let uidBase = "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:"
+        let wired = SystemAudioDevice(
+            id: 200, uid: uidBase + "WIRED-SERIAL:2", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeUSB, usbDeviceClass: 0xEF
+        )
+        let dongle = SystemAudioDevice(
+            id: 201, uid: uidBase + "DONGLE-SERIAL:1", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeUSB, usbDeviceClass: 0x00
+        )
+        let unresolved = SystemAudioDevice(
+            id: 202, uid: uidBase + "OTHER-SERIAL:1", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeUSB
+        )
+        let otherClass = SystemAudioDevice(
+            id: 203, uid: uidBase + "OTHER-SERIAL:1", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeUSB, usbDeviceClass: 0x02
+        )
+
+        XCTAssertEqual(HatorAudioRoute.forDevice(wired), .wiredUSB)
+        XCTAssertEqual(HatorAudioRoute.forDevice(dongle), .usbDongle)
+        XCTAssertEqual(HatorAudioRoute.forDevice(unresolved), .none)
+        XCTAssertEqual(HatorAudioRoute.forDevice(otherClass), .none)
+        XCTAssertTrue(HatorAudioRoute.wiredUSB.isWireless == false)
+        XCTAssertTrue(HatorAudioRoute.usbDongle.isWireless)
+        XCTAssertTrue(HatorRadioMode.dongle.isAvailable(with: [dongle]))
+        XCTAssertFalse(HatorRadioMode.dongle.isAvailable(with: [wired]))
+        XCTAssertFalse(HatorRadioMode.dongle.isAvailable(with: [unresolved]))
+
+        XCTAssertEqual(HatorUSBDeviceInventory.serial(fromCoreAudioUID: wired.uid), "WIRED-SERIAL")
+        XCTAssertNil(HatorUSBDeviceInventory.serial(fromCoreAudioUID: "GenericUSB"))
+        XCTAssertNil(HatorUSBDeviceInventory.serial(fromCoreAudioUID: uidBase + ":2"))
+        XCTAssertNil(HatorUSBDeviceInventory.serial(fromCoreAudioUID: uidBase + "ser:na"))
+        XCTAssertNil(HatorUSBDeviceInventory.serial(fromCoreAudioUID: uidBase + "ser:1:extra"))
     }
 
     func testRadioSwitchWaitsForSettlingAfterACK() {
@@ -338,7 +375,8 @@ final class HatorProtocolTests: XCTestCase {
         )
         let dongle = SystemAudioDevice(
             id: 102, uid: "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:demo:1",
-            name: "HATOR PHOENIX 2", transportType: kAudioDeviceTransportTypeUSB
+            name: "HATOR PHOENIX 2", transportType: kAudioDeviceTransportTypeUSB,
+            usbDeviceClass: 0x00
         )
         let speakers = SystemAudioDevice(
             id: 103, uid: "Mac-Speakers", name: "Mac mini Speakers",
@@ -402,6 +440,7 @@ final class HatorProtocolTests: XCTestCase {
         XCTAssertFalse(usb.contains(.spatialAudio))
         XCTAssertTrue(usb.contains(.battery))
         XCTAssertTrue(usb.contains(.equalizer))
+        XCTAssertEqual(HatorAudioRoute.effectiveCapabilities(hardware, route: .wiredUSB).rawValue, 0)
         XCTAssertEqual(HatorAudioRoute.effectiveCapabilities(hardware, route: .none).rawValue, 0)
     }
 
@@ -413,7 +452,8 @@ final class HatorProtocolTests: XCTestCase {
         let dongle = SystemAudioDevice(
             id: 102,
             uid: "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:demo:1",
-            name: "HATOR PHOENIX 2", transportType: kAudioDeviceTransportTypeUSB
+            name: "HATOR PHOENIX 2", transportType: kAudioDeviceTransportTypeUSB,
+            usbDeviceClass: 0x00
         )
         let speakers = SystemAudioDevice(
             id: 103, uid: "Mac-Speakers", name: "Mac mini Speakers",
@@ -456,11 +496,98 @@ final class HatorProtocolTests: XCTestCase {
         )
     }
 
+    func testMenuGroupsOnlyWirelessButPreservesSelectableWiredUSB() {
+        let usbPrefix = "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:"
+        let bt = SystemAudioDevice(
+            id: 101, uid: "HATOR-BT", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeBluetooth
+        )
+        let dongle = SystemAudioDevice(
+            id: 102, uid: usbPrefix + "DONGLE:1", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeUSB, usbDeviceClass: 0x00
+        )
+        let wired = SystemAudioDevice(
+            id: 103, uid: usbPrefix + "WIRED:2", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeUSB, usbDeviceClass: 0xEF
+        )
+        let speakers = SystemAudioDevice(
+            id: 104, uid: "BuiltInSpeaker", name: "Mac mini Speakers",
+            transportType: kAudioDeviceTransportTypeBuiltIn
+        )
+        let devices = [speakers, bt, dongle, wired]
+        func visible(selected: AudioDeviceID?, mode: HatorRadioMode?) -> [AudioDeviceID] {
+            MenuAudioOutputGrouping.visibleOutputs(
+                devices, selectedID: selected, hatorRadioMode: mode
+            ).map(\.id)
+        }
+
+        // The one wireless row follows the selected Bluetooth/dongle route.
+        // The separate wired row always stays visible/selectable.
+        XCTAssertEqual(visible(selected: bt.id, mode: .dongle), [104, 101, 103])
+        XCTAssertEqual(visible(selected: dongle.id, mode: .bluetooth), [104, 102, 103])
+        XCTAssertEqual(visible(selected: wired.id, mode: .dongle), [104, 102, 103])
+        XCTAssertEqual(visible(selected: wired.id, mode: .bluetooth), [104, 101, 103])
+        XCTAssertEqual(visible(selected: speakers.id, mode: nil), [104, 101, 103])
+
+        XCTAssertEqual(
+            MenuAudioOutputGrouping.displayName(wired, among: devices),
+            "HATOR PHOENIX 2 · Wired USB-C"
+        )
+        XCTAssertEqual(
+            MenuAudioOutputGrouping.displayName(dongle, among: devices),
+            "HATOR PHOENIX 2 · 2.4 GHz dongle"
+        )
+        XCTAssertEqual(
+            MenuAudioOutputGrouping.displayName(bt, among: [speakers, bt, dongle]),
+            "HATOR PHOENIX 2"
+        )
+        XCTAssertEqual(
+            MenuAudioOutputGrouping.visibleOutputs(
+                [wired, dongle], selectedID: wired.id, hatorRadioMode: .dongle
+            ).map(\.id), [103, 102]
+        )
+    }
+
+    func testHandoffNeverConfusesWiredUSBWithDongle() {
+        let prefix = "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:"
+        let wired = SystemAudioDevice(
+            id: 2, uid: prefix + "wired:2", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeUSB, usbDeviceClass: 0xEF
+        )
+        let dongle = SystemAudioDevice(
+            id: 3, uid: prefix + "dongle:1", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeUSB, usbDeviceClass: 0x00
+        )
+        // A wireless handoff may pick the dongle, never the wired interface.
+        XCTAssertEqual(
+            HatorAudioHandoffPolicy.preferredOutput(
+                startedWithHator: true, target: .dongle,
+                originalOutputUID: "BT", devices: [wired, dongle], currentID: wired.id
+            )?.id, dongle.id
+        )
+        XCTAssertNil(
+            HatorAudioHandoffPolicy.preferredOutput(
+                startedWithHator: true, target: .dongle,
+                originalOutputUID: "BT", devices: [wired], currentID: wired.id
+            )
+        )
+        // A physically attached wire acts like another output, not a radio
+        // endpoint to steal during a wireless mode change.
+        XCTAssertEqual(
+            HatorAudioHandoffPolicy.preferredOutput(
+                startedWithHator: false, target: .bluetooth,
+                originalOutputUID: wired.uid,
+                devices: [wired, dongle], currentID: dongle.id
+            )?.id, wired.id
+        )
+    }
+
     func testNarrowAudioMatching() {
         func device(_ name: String, _ transport: UInt32) -> SystemAudioDevice {
             .init(
                 id: 123, uid: "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:demo:1", name: name,
-                transportType: transport)
+                transportType: transport,
+                usbDeviceClass: transport == kAudioDeviceTransportTypeUSB ? 0x00 : nil)
         }
         XCTAssertEqual(HatorAudioRoute.forDevice(device("HATOR PHOENIX 2", kAudioDeviceTransportTypeUSB)), .usbDongle)
         XCTAssertEqual(

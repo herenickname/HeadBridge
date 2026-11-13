@@ -1,6 +1,6 @@
 # HATOR Phoenix 2 Wireless — provider integration notes
 
-Status: **experimental HeadBridge implementation; partially validated on physical hardware**. On 2026-11-12 (headset firmware `V0.0.116`), HeadBridge connected over BLE while USB-dongle audio was active, read battery, ANC, EQ, Spatial, RGB and microphone state, and verified ANC, EQ, RGB and microphone-mute writes. On 2026-11-13, Spatial switching, radio-mode switching and automatic macOS audio handoff were additionally tested on the physical headset. Physical radio loss, full power cycles, dongle unplug/replug and wired USB-C operation still need testing.
+Status: **experimental HeadBridge implementation; partially validated on physical hardware**. On 2026-11-12 (headset firmware `V0.0.116`), HeadBridge connected over BLE while USB-dongle audio was active, read battery, ANC, EQ, Spatial, RGB and microphone state, and verified ANC, EQ, RGB and microphone-mute writes. On 2026-11-13, Spatial switching, radio-mode switching and automatic macOS audio handoff were additionally tested on the physical headset. Physical radio loss, full power cycles and dongle unplug/replug still need testing. Direct wired USB-C audio enumeration and automatic macOS output selection have since been verified through physical cable unplug/replug; USB HID control in wired mode remains unverified.
 
 ## Audio output is not the control transport
 
@@ -9,6 +9,45 @@ Phoenix 2 Wireless can present a Bluetooth audio output or a 2.4 GHz USB-dongle 
 Local hardware tests confirmed that the 2.4 GHz USB audio output remained selected and audio continued normally while authenticated BLE commands toggled headset RGB on/off, with successful independent readback. Repeated BLE reconnects and a controlled in-process reconnect also succeeded. The earlier RGB-over-dongle tests were conducted with the separate research prototype; the HeadBridge app has since independently confirmed RGB and microphone-mute SET/GET while the dongle is the active audio output. Radio-loss and full power-cycle tests remain outstanding.
 
 Known BLE control endpoint: JieLi RCSP over GATT service `AE00`, write characteristic `AE01`, notify characteristic `AE02`, with verified mutual authentication. A strict advertised-service-filtered scan may miss this device; discovery must still narrowly validate the headset identity before connecting. Do not publish local identifiers, authentication material, or raw private captures.
+
+## Wired USB-C vs 2.4 GHz dongle
+
+The Phoenix 2 wired USB-C connection uses digital USB Audio, **not** the
+generic JieLi AUX/Line-in mode. Physical cable attach automatically creates a
+second Core Audio USB device; macOS can select it as the default output even
+while the dongle is still attached. The wired and dongle devices share the
+same reported name, manufacturer, VID 0x379A and PID 0x6303, so testing only
+name/VID/PID or the common Core Audio UID prefix is not sufficient.
+
+On 2026-11-13, physical USB-C unplug/replug while keeping the dongle
+installed confirmed:
+- **Wired headset**: USB device class `0xEF` (239), USB Audio output/input
+  and USB HID. It disappears when the cable is removed and comes back on
+  reconnect with the same USB serial.
+- **2.4 GHz dongle**: USB device class `0x00`, independent USB Audio
+  output/input and USB HID. It remained connected during the full test.
+- Both support 48 kHz stereo Core Audio output; this is the host digital PCM
+  format, not proof of how the 2.4 GHz wireless radio encodes sound.
+- BLE GETs for `FF/07` and SYS_INFO timed out with USB-C wired audio active;
+  the application also could not authenticate BLE control. There is currently
+  **no verified RCSP command to enter or exit Wired USB-C**.
+
+HeadBridge resolves the serial component of each verified JieLi Core Audio
+UID to an `IOUSBHostDevice` with matching VID/PID/USB serial using
+read-only IOKit registry properties. Device class `0x00` is classified as
+`.usbDongle`, and `0xEF` as `.wiredUSB`. Unexpected device classes, absent
+serials or ambiguous matches remain unclassified rather than being silently
+treated as dongles. **USB serials are matched dynamically, not hardcoded**.
+The two known USB configurations were validated on physical Phoenix 2
+firmware V0.0.116; other revisions may need new descriptors.
+
+The menu continues to combine **Bluetooth and the 2.4 GHz dongle** as one
+logical *wireless* row, but **Wired USB-C remains a separate selectable
+macOS audio output** with a distinct label. Direct wired audio is also
+indicated in Settings; wireless radio controls require authenticated BLE
+and remain unavailable while disconnected. The wired endpoint must never
+satisfy the radio selector's "dongle connected" prerequisite, or become a
+2.4 GHz target during automatic audio handoff.
 
 ## Verified Bluetooth / 2.4 GHz radio-mode selection
 

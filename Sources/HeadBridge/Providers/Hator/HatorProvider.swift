@@ -278,7 +278,8 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     func recognizesExternalAudioDevice(_ device: SystemAudioDevice) -> Bool {
-        HatorAudioRoute.forDevice(device) == .usbDongle
+        let route = HatorAudioRoute.forDevice(device)
+        return route == .usbDongle || route == .wiredUSB
     }
 
     func updateBluetoothPairedDevices(_ devices: [BluetoothPairedDevice]) {
@@ -392,7 +393,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
             target: target,
             originalOutputUID: previous?.uid,
             startedWithHator: previous.map {
-                HatorAudioRoute.forDevice($0) != .none
+                HatorAudioRoute.forDevice($0).isWireless
             } ?? false
         )
         requestedRadioMode = target

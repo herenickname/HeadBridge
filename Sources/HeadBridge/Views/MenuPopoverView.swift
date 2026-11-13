@@ -2,34 +2,51 @@ import AppKit
 import CoreAudio
 import SwiftUI
 
-/// A HATOR Bluetooth endpoint and its 2.4 GHz USB receiver represent one
-/// physical headset. Collapse only these verified endpoints in the menu UI;
-/// SystemAudioController still retains both real Core Audio devices.
+/// The Bluetooth endpoint and 2.4 GHz receiver are two routes for one
+/// wireless headset. Only these two collapse into one menu row; direct wired
+/// USB-C audio remains an independently selectable output.
 enum MenuAudioOutputGrouping {
+    static func displayName(
+        _ device: SystemAudioDevice, among devices: [SystemAudioDevice]
+    ) -> String {
+        let route = HatorAudioRoute.forDevice(device)
+        switch route {
+        case .wiredUSB:
+            return "\(device.name) · Wired USB-C"
+        case .bluetooth, .usbDongle:
+            let wiredPresent = devices.contains {
+                HatorAudioRoute.forDevice($0) == .wiredUSB
+            }
+            return wiredPresent ? "\(device.name) · \(route.title)" : device.name
+        case .none:
+            return device.name
+        }
+    }
+
     static func visibleOutputs(
         _ devices: [SystemAudioDevice],
         selectedID: AudioDeviceID?,
         hatorRadioMode: HatorRadioMode?
     ) -> [SystemAudioDevice] {
-        let hatorDevices = devices.filter { HatorAudioRoute.forDevice($0) != .none }
-        guard hatorDevices.count > 1 else { return devices }
+        let wirelessDevices = devices.filter { HatorAudioRoute.forDevice($0).isWireless }
+        guard wirelessDevices.count > 1 else { return devices }
 
         // A selected HATOR endpoint must always remain visibly selected.
         // Otherwise prefer the transport reported by the headset, so clicking
         // the single row selects an audio route that is actually usable.
         let representative =
-            hatorDevices.first { $0.id == selectedID }
+            wirelessDevices.first { $0.id == selectedID }
             ?? hatorRadioMode.flatMap { mode in
-                hatorDevices.first { HatorAudioRoute.forDevice($0) == mode.audioRoute }
+                wirelessDevices.first { HatorAudioRoute.forDevice($0) == mode.audioRoute }
             }
-            ?? hatorDevices.first { HatorAudioRoute.forDevice($0) == .bluetooth }
-            ?? hatorDevices[0]
+            ?? wirelessDevices.first { HatorAudioRoute.forDevice($0) == .bluetooth }
+            ?? wirelessDevices[0]
 
-        var includedHator = false
+        var includedWireless = false
         return devices.compactMap { device in
-            guard HatorAudioRoute.forDevice(device) != .none else { return device }
-            guard !includedHator else { return nil }
-            includedHator = true
+            guard HatorAudioRoute.forDevice(device).isWireless else { return device }
+            guard !includedWireless else { return nil }
+            includedWireless = true
             return representative
         }
     }
@@ -294,6 +311,10 @@ struct MenuPopoverView: View {
         let providerReady = provider?.connectionState == .ready
         let expanded = expandedDeviceID == device.id
 
+        let displayName = MenuAudioOutputGrouping.displayName(
+            device, among: systemAudio.devices
+        )
+
         return Button {
             if provider != nil && selected && providerReady {
                 withAnimation(.easeInOut(duration: 0.18)) {
@@ -319,9 +340,10 @@ struct MenuPopoverView: View {
                 .frame(width: 26, height: 26)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(device.name)
+                    Text(displayName)
                         .font(.system(size: 14))
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     if let provider, let battery = provider.batteryPercent {
                         HStack(spacing: 4) {
                             Image(systemName: HeadphoneBatterySymbol.name(for: battery))

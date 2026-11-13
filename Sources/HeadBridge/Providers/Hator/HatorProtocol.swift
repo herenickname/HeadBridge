@@ -39,7 +39,19 @@ enum HatorRadioMode: UInt8, CaseIterable, Identifiable {
 enum HatorAudioRoute: Equatable {
     case bluetooth
     case usbDongle
+    case wiredUSB
     case none
+
+    var isWireless: Bool { self == .bluetooth || self == .usbDongle }
+
+    var title: String {
+        switch self {
+        case .bluetooth: "Bluetooth"
+        case .usbDongle: "2.4 GHz dongle"
+        case .wiredUSB: "Wired USB-C"
+        case .none: "Unavailable"
+        }
+    }
 
     static func forDevice(_ device: SystemAudioDevice) -> Self {
         guard BluetoothDeviceNameMatcher.normalized(device.name) == "hatorphoenix2" else {
@@ -47,15 +59,22 @@ enum HatorAudioRoute: Equatable {
         }
         if device.isBluetooth { return .bluetooth }
         if device.transportType == kAudioDeviceTransportTypeUSB,
-            device.uid.lowercased().hasPrefix("appleusbaudioengine:jieli technology:usb composite device:")
+            HatorUSBDeviceInventory.serial(fromCoreAudioUID: device.uid) != nil
         {
-            return .usbDongle
+            // Physical unplug/replug on Phoenix 2 confirmed the wired
+            // headset as USB device class EF and the receiver as class 00.
+            // An unknown descriptor must never be treated as the dongle.
+            switch device.usbDeviceClass {
+            case 0x00: return .usbDongle
+            case 0xEF: return .wiredUSB
+            default: return .none
+            }
         }
         return .none
     }
 
     static func effectiveCapabilities(_ hardware: HeadphoneCapabilities, route: Self) -> HeadphoneCapabilities {
-        guard route != .none else { return [] }
+        guard route != .none, route != .wiredUSB else { return [] }
         var result = hardware
         if route == .usbDongle {
             result.remove(.spatialAudio)

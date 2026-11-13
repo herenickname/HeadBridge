@@ -267,6 +267,14 @@ private struct GenericProviderSettingsView: View {
             Form {
                 Section("Connection") {
                     if let hator = provider as? HatorProvider {
+                        if hator.audioRoute == .wiredUSB {
+                            LabeledContent("Audio connection", value: "Wired USB-C")
+                            Text(
+                                "USB-C audio is active. Wireless controls need a separate BLE connection; a cable cannot be selected remotely."
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Wireless mode")
                             HatorRadioModePicker(
@@ -392,6 +400,9 @@ private struct GenericProviderSettingsView: View {
                         LabeledContent("Codec") { Text(codec).foregroundStyle(.secondary) }
                     }
                     if let hator = provider as? HatorProvider {
+                        if hator.audioRoute != .none {
+                            LabeledContent("Active Mac audio", value: hator.audioRoute.title)
+                        }
                         if let mode = hator.displayedRadioMode {
                             LabeledContent("Wireless transport", value: mode.title)
                             if let output = systemAudio.devices.first(where: {
