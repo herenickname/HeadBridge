@@ -3,6 +3,49 @@ import XCTest
 @testable import HeadBridge
 
 final class HatorProtocolTests: XCTestCase {
+    func testOptimisticSpatialSwitchKeepsUserChoiceDuringStaleReadback() {
+        var state = HatorSpatialSwitchState()
+        XCTAssertNil(state.displayed)
+        XCTAssertFalse(state.begin(true))  // not yet confirmed by the headset
+
+        state.receiveDevice(false)
+        XCTAssertEqual(state.displayed, false)
+        XCTAssertTrue(state.begin(true))
+        XCTAssertTrue(state.isPending)
+        XCTAssertEqual(state.displayed, true)  // immediately updated
+
+        state.receiveDevice(false)  // previous value from periodic BLE polling
+        XCTAssertEqual(state.confirmed, false)
+        XCTAssertEqual(state.displayed, true)  // no snapback
+        XCTAssertFalse(state.begin(false))  // no overlapping user commands
+
+        state.finish(verified: true)
+        XCTAssertFalse(state.isPending)
+        XCTAssertEqual(state.confirmed, true)
+        XCTAssertEqual(state.displayed, true)
+    }
+
+    func testOptimisticSpatialSwitchRollbackAndCancellation() {
+        var state = HatorSpatialSwitchState()
+        state.receiveDevice(true)
+
+        XCTAssertTrue(state.begin(false))
+        XCTAssertEqual(state.displayed, false)
+        state.receiveDevice(true)
+        state.finish(verified: false)
+        XCTAssertEqual(state.displayed, true)  // revert to last headset readback
+
+        XCTAssertTrue(state.begin(false))
+        state.receiveDevice(false)  // headset changed while write was pending
+        state.cancel()  // e.g. audio route changed or BLE disconnected
+        XCTAssertEqual(state.displayed, false)  // latest actual value, not stale original
+
+        state.reset()
+        XCTAssertNil(state.displayed)
+        XCTAssertNil(state.confirmed)
+        XCTAssertFalse(state.isPending)
+    }
+
     @MainActor
     func testSilentPlaybackRequiresAnExplicitAudioDestination() {
         let stream = HatorSilentAudioStream()
