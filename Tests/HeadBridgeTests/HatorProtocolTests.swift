@@ -3,47 +3,122 @@ import XCTest
 @testable import HeadBridge
 
 final class HatorProtocolTests: XCTestCase {
-    func testOptimisticSpatialSwitchKeepsUserChoiceDuringStaleReadback() {
+    func testRapidToggleWhileBLEWriteIsPending() {
         var state = HatorSpatialSwitchState()
-        XCTAssertNil(state.displayed)
-        XCTAssertFalse(state.begin(true))  // not yet confirmed by the headset
-
+        XCTAssertFalse(state.select(true))  // still no device readback
         state.receiveDevice(false)
-        XCTAssertEqual(state.displayed, false)
-        XCTAssertTrue(state.begin(true))
-        XCTAssertTrue(state.isPending)
-        XCTAssertEqual(state.displayed, true)  // immediately updated
 
-        state.receiveDevice(false)  // previous value from periodic BLE polling
-        XCTAssertEqual(state.confirmed, false)
-        XCTAssertEqual(state.displayed, true)  // no snapback
-        XCTAssertFalse(state.begin(false))  // no overlapping user commands
+        XCTAssertTrue(state.select(true))
+        XCTAssertEqual(state.displayed, true)  // immediate ON
+        XCTAssertEqual(state.beginWrite(), true)
+        XCTAssertEqual(state.inFlight, true)
 
-        state.finish(verified: true)
-        XCTAssertFalse(state.isPending)
-        XCTAssertEqual(state.confirmed, true)
+        state.receiveDevice(false)  // an older poll must not revert the UI
         XCTAssertEqual(state.displayed, true)
+        XCTAssertTrue(state.select(false))  // immediate OFF, no waiting
+        XCTAssertEqual(state.displayed, false)
+        XCTAssertNil(state.beginWrite())  // no concurrent RCSP commands
+
+        XCTAssertEqual(
+            state.completeWrite(sent: true, verified: true, readback: true),
+            .send(false)
+        )
+        XCTAssertEqual(state.inFlight, false)
+        XCTAssertEqual(state.displayed, false)
+
+        // The second (latest) RCSP command finishes. Only now settle the UI.
+        state.receiveDevice(false)
+        XCTAssertEqual(
+            state.completeWrite(sent: false, verified: true, readback: false),
+            .settled
+        )
+        XCTAssertFalse(state.isPending)
+        XCTAssertEqual(state.displayed, false)
+        XCTAssertEqual(state.confirmed, false)
     }
 
-    func testOptimisticSpatialSwitchRollbackAndCancellation() {
+    func testRapidTapsCoalesceToLatestValue() {
+        var state = HatorSpatialSwitchState()
+        state.receiveDevice(false)
+        XCTAssertTrue(state.select(true))
+        XCTAssertEqual(state.beginWrite(), true)
+        XCTAssertTrue(state.select(false))
+        XCTAssertTrue(state.select(true))  // final user intent = ON
+        XCTAssertFalse(state.select(true))  // redundant tap ignored
+        XCTAssertEqual(
+            state.completeWrite(sent: true, verified: true, readback: true),
+            .settled
+        )
+        XCTAssertNil(state.inFlight)
+        XCTAssertEqual(state.displayed, true)
+        XCTAssertFalse(state.isPending)
+    }
+
+    func testRevertBeforeAudioStartsDoesNotSendBLECommand() {
+        var state = HatorSpatialSwitchState()
+        state.receiveDevice(false)
+        XCTAssertTrue(state.select(true))
+        XCTAssertTrue(state.select(false))
+        XCTAssertNil(state.beginWrite())  // audio startup can be cancelled
+        XCTAssertFalse(state.isPending)
+        XCTAssertEqual(state.displayed, false)
+    }
+
+    func testFailedWriteAndCancellationRollbackToDeviceState() {
         var state = HatorSpatialSwitchState()
         state.receiveDevice(true)
-
-        XCTAssertTrue(state.begin(false))
-        XCTAssertEqual(state.displayed, false)
+        XCTAssertTrue(state.select(false))
+        XCTAssertEqual(state.beginWrite(), false)
         state.receiveDevice(true)
-        state.finish(verified: false)
-        XCTAssertEqual(state.displayed, true)  // revert to last headset readback
+        XCTAssertEqual(state.displayed, false)
+        XCTAssertEqual(
+            state.completeWrite(sent: false, verified: false, readback: true),
+            .failed
+        )
+        XCTAssertEqual(state.displayed, true)
 
-        XCTAssertTrue(state.begin(false))
-        state.receiveDevice(false)  // headset changed while write was pending
-        state.cancel()  // e.g. audio route changed or BLE disconnected
-        XCTAssertEqual(state.displayed, false)  // latest actual value, not stale original
+        XCTAssertTrue(state.select(false))
+        XCTAssertEqual(state.beginWrite(), false)
+        state.receiveDevice(false)
+        state.cancel()  // route switch or disconnect
+        XCTAssertEqual(state.displayed, false)
+        XCTAssertEqual(
+            state.completeWrite(sent: false, verified: true, readback: false),
+            .stale
+        )
 
         state.reset()
         XCTAssertNil(state.displayed)
         XCTAssertNil(state.confirmed)
         XCTAssertFalse(state.isPending)
+    }
+
+    func testFailedOldWriteReconcilesNewestUserIntent() {
+        var state = HatorSpatialSwitchState()
+        state.receiveDevice(false)
+        XCTAssertTrue(state.select(true))
+        XCTAssertEqual(state.beginWrite(), true)
+        XCTAssertTrue(state.select(false))
+        // No readback: the first write may have applied even though its GET failed.
+        // Explicitly write the last chosen state rather than trusting a stale
+        // cached confirmation.
+        XCTAssertEqual(
+            state.completeWrite(sent: true, verified: false, readback: nil),
+            .send(false)
+        )
+        XCTAssertEqual(
+            state.completeWrite(sent: false, verified: true, readback: false),
+            .settled
+        )
+        XCTAssertEqual(state.displayed, false)
+
+        XCTAssertTrue(state.select(true))
+        XCTAssertEqual(state.beginWrite(), true)
+        XCTAssertTrue(state.select(false))
+        XCTAssertEqual(
+            state.completeWrite(sent: true, verified: false, readback: false),
+            .settled
+        )  // latest requested OFF is already confirmed; no second write
     }
 
     @MainActor

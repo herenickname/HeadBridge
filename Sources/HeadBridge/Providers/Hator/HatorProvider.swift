@@ -70,38 +70,79 @@ private struct HatorRestoreProfile: Codable {
     }
 }
 
-/// Separates the latest headset readback from the user-visible optimistic value.
-/// Incoming device snapshots must not snap the switch back while a write is pending.
+/// Last user intent is shown immediately, independently of RCSP readback.
+/// Rapid taps coalesce to one latest target while at most one command is in flight.
 struct HatorSpatialSwitchState: Equatable {
+    enum Completion: Equatable {
+        case stale
+        case settled
+        case failed
+        case send(Bool)
+    }
+
     private(set) var confirmed: Bool?
     private(set) var requested: Bool?
+    private(set) var inFlight: Bool?
 
     var displayed: Bool? { requested ?? confirmed }
     var isPending: Bool { requested != nil }
 
     mutating func receiveDevice(_ value: Bool?) {
-        confirmed = value
+        if let value { confirmed = value }
     }
 
-    mutating func begin(_ value: Bool) -> Bool {
-        guard let confirmed, requested == nil, confirmed != value else { return false }
+    /// Accepts another click even while a previous BLE command is pending.
+    mutating func select(_ value: Bool) -> Bool {
+        guard confirmed != nil, displayed != value else { return false }
         requested = value
         return true
     }
 
-    mutating func finish(verified: Bool) {
-        guard let requested else { return }
-        if verified { confirmed = requested }
+    /// Starts only the latest requested value once the audio stream is ready.
+    /// If the user reverted before anything was sent, no BLE write is needed.
+    mutating func beginWrite() -> Bool? {
+        guard inFlight == nil, let requested else { return nil }
+        guard requested != confirmed else {
+            self.requested = nil
+            return nil
+        }
+        inFlight = requested
+        return requested
+    }
+
+    /// Completes the actual command, not necessarily the latest UI intent.
+    /// A changed intent is reconciled with at most one more write.
+    mutating func completeWrite(
+        sent: Bool, verified: Bool, readback: Bool?
+    ) -> Completion {
+        guard inFlight == sent else { return .stale }
+        inFlight = nil
+        if let readback { confirmed = readback } else if verified { confirmed = sent }
+
+        guard let requested else { return .stale }
+        if requested != sent {
+            // The user changed their mind while the first command was running.
+            // An unknown readback cannot prove that reverting needs no write.
+            if let readback, requested == readback {
+                self.requested = nil
+                return .settled
+            }
+            inFlight = requested
+            return .send(requested)
+        }
+
         self.requested = nil
+        return verified ? .settled : .failed
     }
 
     mutating func cancel() {
         requested = nil
+        inFlight = nil
     }
 
     mutating func reset() {
         confirmed = nil
-        requested = nil
+        cancel()
     }
 }
 
@@ -130,7 +171,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     var spatialUpdatePending: Bool { spatialState.isPending }
     var canChangeSpatialAudio: Bool {
         connectionState == .ready && audioRoute == .bluetooth
-            && capabilities.contains(.spatialAudio) && spatialState.confirmed != nil && !spatialUpdatePending
+            && capabilities.contains(.spatialAudio) && spatialState.confirmed != nil
     }
     @Published private(set) var spatialControlError: String?
     @Published private(set) var rgbEnabled: Bool?
@@ -150,6 +191,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     private var bluetoothOutputUID: String?
     private var waitingForSilentPlayback = false
     private var spatialOperationGeneration = 0
+    private var spatialTimeoutRevision = 0
     private let logger = Logger(subsystem: "io.github.herenickname.HeadBridge", category: "Hator")
     private var hasAudioOutput = false
     private var hasPairedBluetoothDevice = false
@@ -166,7 +208,11 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
             if self.bluetoothAudioPlaying != isRunning { self.bluetoothAudioPlaying = isRunning }
             if isRunning, self.waitingForSilentPlayback {
                 self.waitingForSilentPlayback = false
-                self.sendSpatialAudio()
+                if self.spatialState.inFlight != nil {
+                    self.transmitInFlightSpatialAudio()
+                } else {
+                    self.sendSpatialAudio()
+                }
             } else if !isRunning, self.spatialUpdatePending,
                 !self.waitingForSilentPlayback, !self.silentAudio.isRunning,
                 let bluetoothOutputUID = self.bluetoothOutputUID
@@ -184,8 +230,10 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         client.onSnapshot = { [weak self] snapshot in
             Task { @MainActor [weak self] in self?.applySnapshot(snapshot) }
         }
-        client.onVerifiedWrite = { [weak self] code, value, verified in
-            Task { @MainActor [weak self] in self?.didVerifyWrite(code: code, value: value, verified: verified) }
+        client.onVerifiedWrite = { [weak self] code, value, verified, readback in
+            Task { @MainActor [weak self] in
+                self?.didVerifyWrite(code: code, value: value, verified: verified, readback: readback)
+            }
         }
         client.onVerifiedSystemWrite = { [weak self] command, verified in
             Task { @MainActor [weak self] in self?.didVerifySystemWrite(command, verified: verified) }
@@ -322,19 +370,31 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     func setSpatialAudio(_ enabled: Bool) {
-        guard canChangeSpatialAudio, spatialState.begin(enabled) else { return }
-        // This changes the UI immediately, before opening audio or sending BLE.
+        guard canChangeSpatialAudio, spatialState.select(enabled) else { return }
+        // Accept every user intent immediately, even during a long RCSP
+        // calibration/readback. Only the latest requested value is retained.
         spatialControlError = nil
+        scheduleSpatialTimeout()
+
+        // ON → OFF before the first BLE packet was sent requires no write.
+        // Cancel the startup timer and release temporary playback immediately.
+        if spatialState.inFlight == nil, spatialState.requested == spatialState.confirmed {
+            finishSpatialAudioOperation(error: nil)
+            return
+        }
+
+        // Keep one silent stream and one BLE transaction running until the
+        // final requested value is confirmed. The current write must finish
+        // before a newer target can be sent.
+        if spatialState.inFlight != nil || waitingForSilentPlayback { return }
+
         spatialOperationGeneration &+= 1
         let token = spatialOperationGeneration
-
-        // Real Bluetooth playback already satisfies the headset's requirement.
         if bluetoothAudioPlaying {
             sendSpatialAudio()
         } else {
-            // Temporarily open a silent output stream on the headset, *not*
-            // on the system default output. Do not send RCSP until Core Audio
-            // confirms that the HATOR Bluetooth route is running.
+            // Activate all-zero PCM on the explicit Bluetooth output, without
+            // changing the Mac's default audio device.
             guard let bluetoothOutputUID, silentAudio.start(deviceUID: bluetoothOutputUID) else {
                 finishSpatialAudioOperation(error: "Cannot start Bluetooth audio for Spatial Audio.")
                 return
@@ -353,10 +413,13 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
                 self.finishSpatialAudioOperation(error: "Bluetooth audio did not start.")
             }
         }
+    }
 
-        // Never leave the silent stream open if a BLE transaction stalls.
+    private func scheduleSpatialTimeout() {
+        spatialTimeoutRevision &+= 1
+        let revision = spatialTimeoutRevision
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
-            guard let self, self.spatialOperationGeneration == token,
+            guard let self, self.spatialTimeoutRevision == revision,
                 self.spatialUpdatePending
             else { return }
             self.client.cancelQueuedVendor(0x02)
@@ -365,27 +428,55 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     private func sendSpatialAudio() {
-        guard let requested = spatialState.requested,
-            audioRoute == .bluetooth, connectionState == .ready
-        else {
+        guard audioRoute == .bluetooth, connectionState == .ready else {
             finishSpatialAudioOperation(error: nil)
             return
         }
-        client.setVendor(0x02, value: requested ? 2 : 0)
+        guard spatialState.beginWrite() != nil else {
+            // The user may have switched ON and back OFF before audio began.
+            if !spatialState.isPending { finishSpatialAudioOperation(error: nil) }
+            return
+        }
+        transmitInFlightSpatialAudio()
     }
 
-    private func finishSpatialAudioOperation(error: String?, verified: Bool = false) {
-        // Revert to the newest confirmed headset state on any failed write.
-        // Successful readback confirms the optimistic target.
-        if error == nil && !verified {
-            spatialState.cancel()
-        } else {
-            spatialState.finish(verified: verified)
+    private func transmitInFlightSpatialAudio() {
+        guard let inFlight = spatialState.inFlight else { return }
+        client.setVendor(0x02, value: inFlight ? 2 : 0)
+    }
+
+    private func startSilentAudioForSpatial() {
+        // Keep the same queue between consecutive user intents and verified
+        // writes. Do not change the system default output.
+        guard let bluetoothOutputUID,
+            silentAudio.isRunning || silentAudio.start(deviceUID: bluetoothOutputUID)
+        else {
+            finishSpatialAudioOperation(error: "Cannot start Bluetooth audio for Spatial Audio.")
+            return
         }
-        if !verified { pendingRestoreCodes.remove(0x02) }
+        waitingForSilentPlayback = true
+        let token = spatialOperationGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self, self.spatialOperationGeneration == token,
+                self.waitingForSilentPlayback
+            else { return }
+            self.playbackMonitor.refresh()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self, self.spatialOperationGeneration == token,
+                self.waitingForSilentPlayback
+            else { return }
+            self.finishSpatialAudioOperation(error: "Bluetooth audio did not start.")
+        }
+    }
+
+    private func finishSpatialAudioOperation(error: String?) {
+        if spatialState.isPending { spatialState.cancel() }
+        if error != nil { pendingRestoreCodes.remove(0x02) }
         silentAudio.stop()
         waitingForSilentPlayback = false
         spatialOperationGeneration &+= 1
+        spatialTimeoutRevision &+= 1
         spatialControlError = error
     }
 
@@ -477,21 +568,55 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         )
     }
 
-    private func didVerifyWrite(code: UInt8, value: UInt8, verified: Bool) {
+    private func didVerifyWrite(
+        code: UInt8, value: UInt8, verified: Bool, readback: UInt8?
+    ) {
         logger.notice("BLE write verification code=\(code) value=\(value) confirmed=\(verified)")
-        // Ignore a late completion when there is no matching pending request,
-        // e.g. after a route switch, disconnect or timeout.
-        if code == 0x02, spatialState.requested != (value == 2) { return }
-        let wasRestore = pendingRestoreCodes.remove(code) != nil
         if code == 0x02 {
-            finishSpatialAudioOperation(
-                error: verified ? nil : "Headset did not confirm the Spatial Audio change.",
-                verified: verified
+            let actual = readback.flatMap { raw -> Bool? in
+                switch raw {
+                case 0: return false
+                case 2: return true
+                default: return nil
+                }
+            }
+            let result = spatialState.completeWrite(
+                sent: value == 2, verified: verified, readback: actual
             )
+            switch result {
+            case .stale:
+                return
+            case .send:
+                // The user changed the toggle while this command was being
+                // verified. Reuse the audio stream and send only the latest
+                // target once Core Audio confirms playback is still active.
+                playbackMonitor.refresh()
+                if bluetoothAudioPlaying {
+                    transmitInFlightSpatialAudio()
+                } else {
+                    startSilentAudioForSpatial()
+                }
+                return
+            case .failed:
+                finishSpatialAudioOperation(error: "Headset did not confirm the Spatial Audio change.")
+                return
+            case .settled:
+                let wasRestore = pendingRestoreCodes.remove(0x02) != nil
+                finishSpatialAudioOperation(error: nil)
+                guard !wasRestore, let confirmed = spatialState.confirmed,
+                    let connectedDeviceID
+                else { return }
+                storedProfile.spatial = confirmed
+                HeadphoneProfileStore.save(
+                    storedProfile, providerID: providerID, deviceID: connectedDeviceID
+                )
+                return
+            }
         }
+
+        let wasRestore = pendingRestoreCodes.remove(code) != nil
         guard verified, !wasRestore, let connectedDeviceID else { return }
         switch code {
-        case 0x02: storedProfile.spatial = value == 2
         case 0x05: storedProfile.rgb = value == 1
         case 0x08: storedProfile.microphoneMuted = value == 1
         default: return

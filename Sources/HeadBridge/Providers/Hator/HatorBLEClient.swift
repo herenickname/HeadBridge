@@ -70,7 +70,7 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     static func verificationDelay(for code: UInt8) -> TimeInterval { code == 0x02 ? 9.5 : 0.5 }
     var onConnection: ((HeadphoneConnectionState) -> Void)?
     var onSnapshot: ((HatorDeviceSnapshot) -> Void)?
-    var onVerifiedWrite: ((UInt8, UInt8, Bool) -> Void)?
+    var onVerifiedWrite: ((UInt8, UInt8, Bool, UInt8?) -> Void)?
     var onVerifiedSystemWrite: ((HatorSystemWrite, Bool) -> Void)?
     var connectedIdentifier: UUID? { hasReadySession ? peripheral?.identifier : nil }
     var spatialWritesAllowed = false
@@ -496,7 +496,7 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         guard let activeWrite else { return }
         if let readback { snapshot.vendor[activeWrite.code] = readback }
         onSnapshot?(snapshot)
-        onVerifiedWrite?(activeWrite.code, activeWrite.value, confirmed)
+        onVerifiedWrite?(activeWrite.code, activeWrite.value, confirmed, readback)
         self.activeWrite = nil
         phase = .ready
         processWritesIfReady()
