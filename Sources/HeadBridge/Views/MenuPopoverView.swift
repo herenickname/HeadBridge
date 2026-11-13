@@ -2,6 +2,39 @@ import AppKit
 import CoreAudio
 import SwiftUI
 
+/// A HATOR Bluetooth endpoint and its 2.4 GHz USB receiver represent one
+/// physical headset. Collapse only these verified endpoints in the menu UI;
+/// SystemAudioController still retains both real Core Audio devices.
+enum MenuAudioOutputGrouping {
+    static func visibleOutputs(
+        _ devices: [SystemAudioDevice],
+        selectedID: AudioDeviceID?,
+        hatorRadioMode: HatorRadioMode?
+    ) -> [SystemAudioDevice] {
+        let hatorDevices = devices.filter { HatorAudioRoute.forDevice($0) != .none }
+        guard hatorDevices.count > 1 else { return devices }
+
+        // A selected HATOR endpoint must always remain visibly selected.
+        // Otherwise prefer the transport reported by the headset, so clicking
+        // the single row selects an audio route that is actually usable.
+        let representative =
+            hatorDevices.first { $0.id == selectedID }
+            ?? hatorRadioMode.flatMap { mode in
+                hatorDevices.first { HatorAudioRoute.forDevice($0) == mode.audioRoute }
+            }
+            ?? hatorDevices.first { HatorAudioRoute.forDevice($0) == .bluetooth }
+            ?? hatorDevices[0]
+
+        var includedHator = false
+        return devices.compactMap { device in
+            guard HatorAudioRoute.forDevice(device) != .none else { return device }
+            guard !includedHator else { return nil }
+            includedHator = true
+            return representative
+        }
+    }
+}
+
 struct MenuPopoverView: View {
     @EnvironmentObject private var manager: HeadphoneManager
     @EnvironmentObject private var controller: BowersWilkinsProvider
@@ -208,7 +241,12 @@ struct MenuPopoverView: View {
     }
 
     private var outputSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let visibleOutputs = MenuAudioOutputGrouping.visibleOutputs(
+            systemAudio.devices,
+            selectedID: systemAudio.defaultDeviceID,
+            hatorRadioMode: hator.displayedRadioMode
+        )
+        return VStack(alignment: .leading, spacing: 4) {
             Text("Output")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -222,7 +260,7 @@ struct MenuPopoverView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
             } else {
-                ForEach(systemAudio.devices) { device in
+                ForEach(visibleOutputs) { device in
                     outputDevice(device)
                 }
             }
@@ -436,7 +474,6 @@ struct MenuPopoverView: View {
                         options: HatorRadioMode.allCases,
                         selected: radio,
                         optionTitle: { $0.title },
-                        footer: "Switches the headset radio; follows the Mac audio output only if HATOR was selected.",
                         onSelect: hator.setRadioMode
                     )
                     .disabled(!hator.canChangeRadioMode)

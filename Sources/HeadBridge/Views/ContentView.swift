@@ -206,16 +206,6 @@ private struct GenericProviderSettingsView: View {
             Divider()
             Form {
                 Section("Connection") {
-                    Toggle(
-                        "Restore settings on connect",
-                        isOn: Binding(
-                            get: { provider.restoreOnConnectEnabled },
-                            set: { provider.setRestoreOnConnectEnabled($0) }
-                        ))
-                    Text("Reapplies this Mac's saved profile after the control connection is ready.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
                     if let hator = provider as? HatorProvider {
                         if let radio = hator.displayedRadioMode {
                             Picker(
@@ -247,12 +237,17 @@ private struct GenericProviderSettingsView: View {
                         if let error = hator.radioSwitchError {
                             Text(error).font(.caption).foregroundStyle(.orange)
                         }
-                        Text(
-                            "If HATOR was the current Mac output, HeadBridge follows the new radio mode. Other selected outputs are preserved."
-                        )
+                    }
+
+                    Toggle(
+                        "Restore settings on connect",
+                        isOn: Binding(
+                            get: { provider.restoreOnConnectEnabled },
+                            set: { provider.setRestoreOnConnectEnabled($0) }
+                        ))
+                    Text("Reapplies this Mac's saved profile after the control connection is ready.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    }
                 }
 
                 if let hator = provider as? HatorProvider {

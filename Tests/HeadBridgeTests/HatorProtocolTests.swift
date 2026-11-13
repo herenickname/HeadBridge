@@ -377,6 +377,57 @@ final class HatorProtocolTests: XCTestCase {
         XCTAssertEqual(HatorAudioRoute.effectiveCapabilities(hardware, route: .none).rawValue, 0)
     }
 
+    func testMenuGroupsBothHatorAudioOutputsIntoOneDevice() {
+        let bluetooth = SystemAudioDevice(
+            id: 101, uid: "HATOR-Bluetooth", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeBluetooth
+        )
+        let dongle = SystemAudioDevice(
+            id: 102,
+            uid: "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:demo:1",
+            name: "HATOR PHOENIX 2", transportType: kAudioDeviceTransportTypeUSB
+        )
+        let speakers = SystemAudioDevice(
+            id: 103, uid: "Mac-Speakers", name: "Mac mini Speakers",
+            transportType: kAudioDeviceTransportTypeBuiltIn
+        )
+        let unrelated = SystemAudioDevice(
+            id: 104, uid: "GenericUSB", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeUSB
+        )
+        let all = [speakers, bluetooth, unrelated, dongle]
+        func visible(_ selected: AudioDeviceID?, mode: HatorRadioMode?) -> [SystemAudioDevice] {
+            MenuAudioOutputGrouping.visibleOutputs(
+                all, selectedID: selected, hatorRadioMode: mode
+            )
+        }
+
+        // When one HATOR endpoint is the default, its row remains selected.
+        XCTAssertEqual(visible(bluetooth.id, mode: .dongle).map(\.id), [103, 101, 104])
+        XCTAssertEqual(visible(dongle.id, mode: .bluetooth).map(\.id), [103, 102, 104])
+
+        // With a different default, pick the actual radio route for the
+        // one visible HATOR row, not an inactive paired endpoint.
+        XCTAssertEqual(visible(speakers.id, mode: .bluetooth).map(\.id), [103, 101, 104])
+        XCTAssertEqual(visible(speakers.id, mode: .dongle).map(\.id), [103, 102, 104])
+        XCTAssertEqual(visible(speakers.id, mode: nil).map(\.id), [103, 101, 104])
+
+        // Never collapse similarly named USB outputs with unrelated UIDs.
+        XCTAssertEqual(
+            MenuAudioOutputGrouping.visibleOutputs(
+                [speakers, unrelated, dongle], selectedID: speakers.id,
+                hatorRadioMode: .dongle
+            ).map(\.id), [103, 104, 102]
+        )
+
+        // Do not require one route to be present to keep a single HATOR row.
+        XCTAssertEqual(
+            MenuAudioOutputGrouping.visibleOutputs(
+                [speakers, dongle], selectedID: dongle.id, hatorRadioMode: .dongle
+            ).map(\.id), [103, 102]
+        )
+    }
+
     func testNarrowAudioMatching() {
         func device(_ name: String, _ transport: UInt32) -> SystemAudioDevice {
             .init(
