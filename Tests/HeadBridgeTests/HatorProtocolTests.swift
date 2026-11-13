@@ -3,6 +3,34 @@ import XCTest
 @testable import HeadBridge
 
 final class HatorProtocolTests: XCTestCase {
+    func testRadioModeUsesVerifiedPhoenix2FF07Values() {
+        XCTAssertEqual(HatorRadioMode(rawValue: 0), .bluetooth)
+        XCTAssertEqual(HatorRadioMode(rawValue: 1), .dongle)
+        XCTAssertNil(HatorRadioMode(rawValue: 2))
+        XCTAssertNil(HatorRadioMode(rawValue: 0xFF))
+        XCTAssertEqual(HatorRadioMode.bluetooth.audioRoute, .bluetooth)
+        XCTAssertEqual(HatorRadioMode.dongle.audioRoute, .usbDongle)
+
+        XCTAssertEqual(
+            HatorRCSP.vendorGet(0x07, sequence: 0x42),
+            [0xFE, 0xDC, 0xBA, 0xC0, 0xFF, 0x00, 0x03, 0x42, 0x07, 0xFF, 0xEF]
+        )
+        XCTAssertEqual(
+            HatorRCSP.vendorSet(0x07, value: 1, sequence: 0x43),
+            [0xFE, 0xDC, 0xBA, 0xC0, 0xFF, 0x00, 0x03, 0x43, 0x07, 0x01, 0xEF]
+        )
+        XCTAssertEqual(
+            HatorRCSP.vendorSet(0x07, value: 0, sequence: 0x44),
+            [0xFE, 0xDC, 0xBA, 0xC0, 0xFF, 0x00, 0x03, 0x44, 0x07, 0x00, 0xEF]
+        )
+    }
+
+    func testRadioSwitchWaitsForSettlingAfterACK() {
+        XCTAssertFalse(HatorBLEClient.shouldVerifyOnAck(code: 0x07))
+        XCTAssertGreaterThanOrEqual(HatorBLEClient.verificationDelay(for: 0x07), 1.8)
+        XCTAssertTrue(HatorBLEClient.shouldVerifyOnAck(code: 0x05))
+    }
+
     func testRapidToggleWhileBLEWriteIsPending() {
         var state = HatorSpatialSwitchState()
         XCTAssertFalse(state.select(true))  // still no device readback
@@ -273,6 +301,69 @@ final class HatorProtocolTests: XCTestCase {
         let fields = HatorRCSP.systemFields([0xFF, 0x02, 0x00, 89, 0x02, 0x0D, 1])
         XCTAssertEqual(fields?[0x00], [89])
         XCTAssertEqual(fields?[0x0D], [1])
+    }
+
+    func testRadioHandoffFollowsHeadsetOnlyWhenOriginallySelected() {
+        let bluetooth = SystemAudioDevice(
+            id: 101, uid: "HATOR-Bluetooth", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeBluetooth
+        )
+        let dongle = SystemAudioDevice(
+            id: 102, uid: "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:demo:1",
+            name: "HATOR PHOENIX 2", transportType: kAudioDeviceTransportTypeUSB
+        )
+        let speakers = SystemAudioDevice(
+            id: 103, uid: "Mac-Speakers", name: "Mac mini Speakers",
+            transportType: kAudioDeviceTransportTypeBuiltIn
+        )
+        let devices = [bluetooth, dongle, speakers]
+
+        // The previous selected output was HATOR: follow the target radio.
+        XCTAssertEqual(
+            HatorAudioHandoffPolicy.preferredOutput(
+                startedWithHator: true, target: .dongle, originalOutputUID: bluetooth.uid,
+                devices: devices, currentID: speakers.id
+            )?.id, dongle.id
+        )
+        XCTAssertEqual(
+            HatorAudioHandoffPolicy.preferredOutput(
+                startedWithHator: true, target: .bluetooth, originalOutputUID: dongle.uid,
+                devices: devices, currentID: dongle.id
+            )?.id, bluetooth.id
+        )
+        XCTAssertNil(
+            HatorAudioHandoffPolicy.preferredOutput(
+                startedWithHator: true, target: .dongle, originalOutputUID: bluetooth.uid,
+                devices: devices, currentID: dongle.id
+            )
+        )
+        XCTAssertNil(
+            HatorAudioHandoffPolicy.preferredOutput(
+                startedWithHator: true, target: .bluetooth, originalOutputUID: dongle.uid,
+                devices: [dongle, speakers], currentID: dongle.id
+            )
+        )
+
+        // The previous output was *not* HATOR. A delayed macOS automatic
+        // redirect to newly enumerated Bluetooth must restore the speaker.
+        XCTAssertEqual(
+            HatorAudioHandoffPolicy.preferredOutput(
+                startedWithHator: false, target: .bluetooth, originalOutputUID: speakers.uid,
+                devices: devices, currentID: bluetooth.id
+            )?.id, speakers.id
+        )
+        XCTAssertNil(
+            HatorAudioHandoffPolicy.preferredOutput(
+                startedWithHator: false, target: .dongle, originalOutputUID: speakers.uid,
+                devices: devices, currentID: speakers.id
+            )
+        )
+        XCTAssertNil(
+            HatorAudioHandoffPolicy.preferredOutput(
+                startedWithHator: false, target: .bluetooth, originalOutputUID: "missing",
+                devices: devices, currentID: bluetooth.id
+            )
+        )
     }
 
     func testAudioRouteFiltersOnlySpatialAudio() {

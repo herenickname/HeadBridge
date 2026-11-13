@@ -177,7 +177,15 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     @Published private(set) var rgbEnabled: Bool?
     @Published private(set) var microphoneMuted: Bool?
     @Published private(set) var audioRoute: HatorAudioRoute = .none
+    @Published private(set) var confirmedRadioMode: HatorRadioMode?
+    @Published private(set) var requestedRadioMode: HatorRadioMode?
+    @Published private(set) var radioSwitchError: String?
     @Published private(set) var restoreOnConnectEnabled = false
+
+    var displayedRadioMode: HatorRadioMode? { requestedRadioMode ?? confirmedRadioMode }
+    var canChangeRadioMode: Bool {
+        connectionState == .ready && confirmedRadioMode != nil && requestedRadioMode == nil
+    }
 
     var connectedDeviceID: String? { deviceUUID?.uuidString }
     var connectionStatePublisher: AnyPublisher<HeadphoneConnectionState, Never> {
@@ -188,6 +196,18 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     private let playbackMonitor = HatorPlaybackActivityMonitor()
     private let silentAudio = HatorSilentAudioStream()
     private var bluetoothAudioPlaying = false
+    private weak var systemAudio: SystemAudioController?
+    private var audioHandoffSubscription: AnyCancellable?
+    private struct RadioHandoff {
+        let target: HatorRadioMode
+        let originalOutputUID: String?
+        let startedWithHator: Bool
+        var verified = false
+        var verifiedAt: Date?
+        var reconnectObserved = false
+    }
+    private var radioHandoff: RadioHandoff?
+    private var radioSwitchGeneration = 0
     private var bluetoothOutputUID: String?
     private var waitingForSilentPlayback = false
     private var spatialOperationGeneration = 0
@@ -263,6 +283,16 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         updateTransportAvailability()
     }
 
+    func installAudioHandoff(systemAudio: SystemAudioController) {
+        self.systemAudio = systemAudio
+        audioHandoffSubscription = systemAudio.$devices
+            .combineLatest(systemAudio.$defaultDeviceID)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _, _ in
+                self?.reconcileRadioAudioHandoff()
+            }
+    }
+
     func updateAudioConnectedDevices(_ devices: [SystemAudioDevice]) {
         let nowPresent = devices.contains(where: matches(audioDevice:))
         guard nowPresent != hasAudioOutput else { return }
@@ -322,6 +352,11 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     func shutdown() {
+        radioSwitchGeneration &+= 1
+        radioHandoff = nil
+        requestedRadioMode = nil
+        audioHandoffSubscription?.cancel()
+        audioHandoffSubscription = nil
         cancelSpatialAudioOperation()
         playbackMonitor.stop()
         client.shutdown()
@@ -330,6 +365,106 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         client.onVerifiedWrite = nil
         client.onVerifiedSystemWrite = nil
         clearState()
+    }
+
+    /// Request a hardware radio switch. This is independent of the macOS
+    /// default output: only an in-app request may start an audio handoff.
+    func setRadioMode(_ target: HatorRadioMode) {
+        guard canChangeRadioMode, let confirmedRadioMode,
+            let systemAudio
+        else { return }
+        guard confirmedRadioMode != target else { return }
+
+        // It is possible to enter dongle mode without the receiver present,
+        // but the Mac could then lose headset audio entirely.
+        if target == .dongle,
+            !systemAudio.devices.contains(where: {
+                HatorAudioRoute.forDevice($0) == .usbDongle
+            })
+        {
+            radioSwitchError = "Connect the 2.4 GHz USB dongle first."
+            return
+        }
+
+        let previous = systemAudio.devices.first { $0.id == systemAudio.defaultDeviceID }
+        radioHandoff = RadioHandoff(
+            target: target,
+            originalOutputUID: previous?.uid,
+            startedWithHator: previous.map {
+                HatorAudioRoute.forDevice($0) != .none
+            } ?? false
+        )
+        requestedRadioMode = target
+        radioSwitchError = nil
+        radioSwitchGeneration &+= 1
+        let token = radioSwitchGeneration
+        client.setVendor(0x07, value: target.rawValue)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+            guard let self, self.radioSwitchGeneration == token,
+                self.requestedRadioMode != nil
+            else { return }
+            let message =
+                self.radioHandoff?.verified == true
+                ? "Wireless mode changed, but the requested macOS audio output did not appear."
+                : "Wireless mode could not be confirmed. Check the headset before retrying."
+            self.finishRadioSwitch(error: message)
+        }
+    }
+
+    /// macOS may automatically redirect audio when an A2DP device disappears
+    /// or reappears — even if the previous default was a Mac speaker. Guard
+    /// the original non-HATOR selection and explicitly select the new HATOR
+    /// endpoint only when HATOR had been the original output.
+    private func reconcileRadioAudioHandoff() {
+        guard var handoff = radioHandoff, handoff.verified,
+            let systemAudio
+        else { return }
+        if handoff.startedWithHator,
+            !systemAudio.devices.contains(where: {
+                HatorAudioRoute.forDevice($0) == handoff.target.audioRoute
+            })
+        {
+            return
+        }
+
+        if let desiredOutput = HatorAudioHandoffPolicy.preferredOutput(
+            startedWithHator: handoff.startedWithHator,
+            target: handoff.target,
+            originalOutputUID: handoff.originalOutputUID,
+            devices: systemAudio.devices,
+            currentID: systemAudio.defaultDeviceID
+        ) {
+            systemAudio.select(desiredOutput)
+            if handoff.startedWithHator { return }
+        }
+
+        if handoff.startedWithHator {
+            finishRadioSwitch(error: nil)
+        } else {
+            // macOS can auto-select the reconnecting Bluetooth output
+            // seconds after readback; keep guarding the earlier choice.
+            if handoff.verifiedAt == nil {
+                handoff.verifiedAt = Date()
+                radioHandoff = handoff
+                let token = radioSwitchGeneration
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                    guard let self, self.radioSwitchGeneration == token else { return }
+                    self.reconcileRadioAudioHandoff()
+                }
+            } else if let verifiedAt = handoff.verifiedAt,
+                Date().timeIntervalSince(verifiedAt) >= 5
+            {
+                finishRadioSwitch(error: nil)
+            }
+        }
+    }
+
+    private func finishRadioSwitch(error: String?) {
+        radioSwitchGeneration &+= 1
+        requestedRadioMode = nil
+        radioHandoff = nil
+        radioSwitchError = error
     }
 
     func setNoiseMode(_ mode: HeadphoneNoiseMode) {
@@ -501,6 +636,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         guard hasAudioOutput else { return }
         connectionState = state
         if state != .ready {
+            if radioHandoff != nil { radioHandoff?.reconnectObserved = true }
             clearPublishedValues()
             return
         }
@@ -555,6 +691,17 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         equalizerPresets = snapshot.equalizerPresets
         deviceVolumeRaw = snapshot.rawVolume
         spatialState.receiveDevice(snapshot.vendorBool(0x02))
+        if let raw = snapshot.vendor[0x07],
+            let mode = HatorRadioMode(rawValue: raw)
+        {
+            confirmedRadioMode = mode
+            // A completely new authenticated session supplies a fresh radio
+            // readback even if the original SET callback was interrupted.
+            if radioHandoff?.reconnectObserved == true, requestedRadioMode == mode {
+                radioHandoff?.verified = true
+                reconcileRadioAudioHandoff()
+            }
+        }
         rgbEnabled = snapshot.vendorBool(0x05)
         microphoneMuted = snapshot.vendorBool(0x08)
         hardwareCapabilities = []
@@ -572,6 +719,21 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         code: UInt8, value: UInt8, verified: Bool, readback: UInt8?
     ) {
         logger.notice("BLE write verification code=\(code) value=\(value) confirmed=\(verified)")
+        if code == 0x07 {
+            guard let target = HatorRadioMode(rawValue: value),
+                requestedRadioMode == target, radioHandoff != nil
+            else { return }
+            if verified {
+                confirmedRadioMode = target
+                radioHandoff?.verified = true
+                reconcileRadioAudioHandoff()
+            } else {
+                finishRadioSwitch(
+                    error: "Headset did not confirm the wireless mode change."
+                )
+            }
+            return
+        }
         if code == 0x02 {
             let actual = readback.flatMap { raw -> Bool? in
                 switch raw {
@@ -657,6 +819,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         spatialControlError = nil
         rgbEnabled = nil
         microphoneMuted = nil
+        confirmedRadioMode = nil
         hardwareCapabilities = []
         capabilities = []
         deviceUUID = nil
@@ -665,6 +828,10 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     private func clearState() {
+        radioSwitchGeneration &+= 1
+        radioHandoff = nil
+        requestedRadioMode = nil
+        radioSwitchError = nil
         connectionState = .idle
         clearPublishedValues()
         storedProfile = .init()

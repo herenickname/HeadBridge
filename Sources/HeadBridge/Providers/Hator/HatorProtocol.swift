@@ -1,6 +1,28 @@
 import CoreAudio
 import Foundation
 
+/// Physical wireless transport reported by the Phoenix 2 vendor RCSP FF/07 field.
+/// Readback and physical Mode-button pushes were both verified on firmware V0.0.116.
+enum HatorRadioMode: UInt8, CaseIterable, Identifiable {
+    case bluetooth = 0
+    case dongle = 1
+
+    var id: UInt8 { rawValue }
+    var title: String {
+        switch self {
+        case .bluetooth: "Bluetooth"
+        case .dongle: "2.4 GHz dongle"
+        }
+    }
+
+    var audioRoute: HatorAudioRoute {
+        switch self {
+        case .bluetooth: .bluetooth
+        case .dongle: .usbDongle
+        }
+    }
+}
+
 /// Audio output selection is independent of the authenticated BLE control link.
 enum HatorAudioRoute: Equatable {
     case bluetooth
@@ -27,6 +49,35 @@ enum HatorAudioRoute: Equatable {
             result.remove(.spatialAudio)
         }
         return result
+    }
+}
+
+/// Pure policy for following HATOR output or preserving another Mac output.
+/// All decisions use the currently enumerated Core Audio devices, never IDs
+/// cached across a wireless re-enumeration.
+enum HatorAudioHandoffPolicy {
+    static func preferredOutput(
+        startedWithHator: Bool,
+        target: HatorRadioMode,
+        originalOutputUID: String?,
+        devices: [SystemAudioDevice],
+        currentID: AudioDeviceID?
+    ) -> SystemAudioDevice? {
+        let current = devices.first { $0.id == currentID }
+        if startedWithHator {
+            guard
+                let targetDevice = devices.first(where: {
+                    HatorAudioRoute.forDevice($0) == target.audioRoute
+                }), targetDevice.id != currentID
+            else { return nil }
+            return targetDevice
+        }
+        guard let current,
+            HatorAudioRoute.forDevice(current) != .none,
+            let original = devices.first(where: { $0.uid == originalOutputUID }),
+            original.id != current.id
+        else { return nil }
+        return original
     }
 }
 

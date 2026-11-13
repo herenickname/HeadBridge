@@ -168,6 +168,7 @@ private final class GenericProviderSettingsObserver: ObservableObject {
 }
 
 private struct GenericProviderSettingsView: View {
+    @EnvironmentObject private var systemAudio: SystemAudioController
     @StateObject private var observer: GenericProviderSettingsObserver
     let deviceName: String
 
@@ -214,6 +215,44 @@ private struct GenericProviderSettingsView: View {
                     Text("Reapplies this Mac's saved profile after the control connection is ready.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    if let hator = provider as? HatorProvider {
+                        if let radio = hator.displayedRadioMode {
+                            Picker(
+                                "Wireless mode",
+                                selection: Binding(
+                                    get: { hator.displayedRadioMode ?? radio },
+                                    set: { hator.setRadioMode($0) }
+                                )
+                            ) {
+                                ForEach(HatorRadioMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .disabled(!hator.canChangeRadioMode)
+                            if hator.requestedRadioMode != nil {
+                                HStack(spacing: 8) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Switching headset and checking macOS audio…")
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                        } else if hator.connectionState == .ready {
+                            Text("Reading wireless mode from the headset…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let error = hator.radioSwitchError {
+                            Text(error).font(.caption).foregroundStyle(.orange)
+                        }
+                        Text(
+                            "If HATOR was the current Mac output, HeadBridge follows the new radio mode. Other selected outputs are preserved."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
                 }
 
                 if let hator = provider as? HatorProvider {
@@ -301,6 +340,26 @@ private struct GenericProviderSettingsView: View {
                         LabeledContent("Codec") { Text(codec).foregroundStyle(.secondary) }
                     }
                     if let hator = provider as? HatorProvider {
+                        if let mode = hator.displayedRadioMode {
+                            LabeledContent("Wireless transport", value: mode.title)
+                            if let output = systemAudio.devices.first(where: {
+                                HatorAudioRoute.forDevice($0) == mode.audioRoute
+                            }) {
+                                LabeledContent("macOS output") {
+                                    Text(systemAudio.defaultDeviceID == output.id ? "Selected" : "Available")
+                                        .foregroundStyle(.secondary)
+                                }
+                                if let format = SystemAudioController.outputFormat(for: output) {
+                                    LabeledContent("macOS output format", value: format)
+                                }
+                            }
+                            if mode == .bluetooth {
+                                LabeledContent("Active Bluetooth codec", value: "Not exposed by macOS")
+                                LabeledContent("Headset supports", value: "SBC, AAC, LDAC")
+                            } else {
+                                LabeledContent("2.4 GHz radio codec", value: "Not reported by dongle")
+                            }
+                        }
                         if let volume = hator.deviceVolumeRaw {
                             LabeledContent("Headset volume (raw)", value: String(volume))
                         }

@@ -66,8 +66,17 @@ enum HatorSystemWrite: Equatable {
 
 /// Single-owner BLE transport for Phoenix 2. All delegate events are delivered on the main queue.
 final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
-    static func shouldVerifyOnAck(code: UInt8) -> Bool { code != 0x02 }
-    static func verificationDelay(for code: UInt8) -> TimeInterval { code == 0x02 ? 9.5 : 0.5 }
+    static func shouldVerifyOnAck(code: UInt8) -> Bool {
+        // RF transport and Spatial both need time to settle after an ACK.
+        code != 0x02 && code != 0x07
+    }
+    static func verificationDelay(for code: UInt8) -> TimeInterval {
+        switch code {
+        case 0x02: 9.5
+        case 0x07: 1.8
+        default: 0.5
+        }
+    }
     var onConnection: ((HeadphoneConnectionState) -> Void)?
     var onSnapshot: ((HatorDeviceSnapshot) -> Void)?
     var onVerifiedWrite: ((UInt8, UInt8, Bool, UInt8?) -> Void)?
@@ -101,7 +110,7 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     private var sequence = UInt8.random(in: 0x30...0xD0)
     private var requestSequence: UInt8 = 0
     private var vendorIndex = 0
-    private let vendorCodes: [UInt8] = [0x02, 0x05, 0x08]
+    private let vendorCodes: [UInt8] = [0x02, 0x05, 0x07, 0x08]
     private var snapshot = HatorDeviceSnapshot()
     private var desiredWrites: [UInt8: UInt8] = [:]
     private var writeOrder: [UInt8] = []
@@ -178,7 +187,7 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         requestSystemInfo()
     }
 
-    /// Only three independently verified reversible vendor controls.
+    /// Only independently verified reversible vendor controls.
     func setSystem(_ command: HatorSystemWrite) {
         guard isStarted, hasReadySession, command.packet(sequence: 0) != nil else { return }
         // Coalesce repeated slider changes and rapid ANC mode clicks.
@@ -191,7 +200,7 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     func setVendor(_ code: UInt8, value: UInt8) {
         // A transient UI refresh must not enqueue the same in-flight command again.
         if let activeWrite, activeWrite.code == code, activeWrite.value == value { return }
-        guard isStarted, [0x02, 0x05, 0x08].contains(code),
+        guard isStarted, [0x02, 0x05, 0x07, 0x08].contains(code),
             code != 0x02 || spatialWritesAllowed
         else { return }
         guard
@@ -653,7 +662,7 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
                 code == activeWrite.code, value != 0xFF
             {
                 completeWrite(confirmed: value == activeWrite.value, readback: value)
-            } else if phase == .ready, [0x02, 0x05, 0x08].contains(code) {
+            } else if phase == .ready, [0x02, 0x05, 0x07, 0x08].contains(code) {
                 snapshot.vendor[code] = value
                 onSnapshot?(snapshot)
             }

@@ -1,6 +1,6 @@
 # HATOR Phoenix 2 Wireless — provider integration notes
 
-Status: **experimental HeadBridge implementation; partially validated on physical hardware**. On 2026-11-12 (headset firmware `V0.0.116`), HeadBridge connected over BLE with 2.4 GHz USB audio active, read battery, ANC, EQ, Spatial, RGB and microphone state, and verified ANC, EQ, RGB and microphone-mute writes with readback. Bluetooth-audio Spatial switching, physical radio loss, full power cycles and dongle unplug/replug still require hardware testing.
+Status: **experimental HeadBridge implementation; partially validated on physical hardware**. On 2026-11-12 (headset firmware `V0.0.116`), HeadBridge connected over BLE while USB-dongle audio was active, read battery, ANC, EQ, Spatial, RGB and microphone state, and verified ANC, EQ, RGB and microphone-mute writes. On 2026-11-13, Spatial switching, radio-mode switching and automatic macOS audio handoff were additionally tested on the physical headset. Physical radio loss, full power cycles, dongle unplug/replug and wired USB-C operation still need testing.
 
 ## Audio output is not the control transport
 
@@ -9,6 +9,60 @@ Phoenix 2 Wireless can present a Bluetooth audio output or a 2.4 GHz USB-dongle 
 Local hardware tests confirmed that the 2.4 GHz USB audio output remained selected and audio continued normally while authenticated BLE commands toggled headset RGB on/off, with successful independent readback. Repeated BLE reconnects and a controlled in-process reconnect also succeeded. The earlier RGB-over-dongle tests were conducted with the separate research prototype; the HeadBridge app has since independently confirmed RGB and microphone-mute SET/GET while the dongle is the active audio output. Radio-loss and full power-cycle tests remain outstanding.
 
 Known BLE control endpoint: JieLi RCSP over GATT service `AE00`, write characteristic `AE01`, notify characteristic `AE02`, with verified mutual authentication. A strict advertised-service-filtered scan may miss this device; discovery must still narrowly validate the headset identity before connecting. Do not publish local identifiers, authentication material, or raw private captures.
+
+## Verified Bluetooth / 2.4 GHz radio-mode selection
+
+JieLi manufacturer opcode `FF`, field `07` is **the hardware radio mode**
+on the physically tested Phoenix 2 firmware `V0.0.116`:
+
+| Operation | RCSP parameters following sequence | Verified outcome |
+| --- | --- | --- |
+| GET | `07 FF` | `00` Bluetooth / `01` 2.4 GHz |
+| SET Bluetooth | `07 00` | ACK `00`, event, GET `00`, macOS Bluetooth output |
+| SET dongle | `07 01` | ACK `00`, event, GET `01`, macOS USB output |
+
+These values were confirmed with a reversible independent BLE CLI experiment
+and physical Mode-button notifications, not inferred from the generic
+`SWITCH_DEVICE (0x0B)` SDK opcode. The SET is not an idempotent no-op:
+sending `07 00` when already in Bluetooth mode briefly disrupted the
+Bluetooth audio output. **Always perform a fresh GET and skip redundant SET.**
+
+HeadBridge now includes an optimistic, serialized radio selector in Settings
+and its menu bar popover. It reads `FF/07` on connection and refresh and
+tracks unsolicited `FF/07` events. It uses a 1.8-second verification delay
+for the radio change, and explicitly verifies a follow-up GET; ACK alone
+does not confirm successful RF handoff. On a dropped BLE link, the reconnect
+snapshot can independently confirm the new radio mode.
+
+The macOS default audio-output policy is intentionally separate:
+
+- If HATOR was the selected output **before the in-app action**, select the
+  corresponding Bluetooth/USB endpoint when Core Audio enumerates it.
+- If a *different* audio output was selected before the action, do not steal
+  sound. macOS can unexpectedly auto-select HATOR Bluetooth on reconnect even
+  after Mac mini Speakers were selected. A short-lived guard restores the
+  prior output by its UID if this happens.
+- The software does not change system input/microphone devices as a side
+  effect. Switching physical Mode does not invoke an in-app output handoff.
+- Entering dongle mode requires the USB receiver to already be enumerated,
+  otherwise HeadBridge refuses the switch with a useful error.
+
+Read-only Status rows distinguish the host's PCM audio format from the radio
+codec. Core Audio on the test Mac exposes `44.1 kHz, stereo` over Bluetooth
+and `48 kHz, stereo` through the USB dongle. Neither identifies the actual
+Bluetooth A2DP codec nor the proprietary 2.4 GHz airlink encoding. The
+hardware supports Bluetooth SBC/AAC/LDAC; macOS codec negotiation remains
+unverified. No user-facing codec selector is provided.
+
+**Live validation, 2026-11-13:** In-app dongle → Bluetooth selection
+immediately updated the UI, disabled duplicate submissions while pending,
+confirmed vendor `07 00` readback in the app logs and automatically selected
+the Bluetooth Core Audio output. Independent CLI experiments verified both
+radio directions and restoration; non-HATOR output retention was observed
+as necessary because macOS reselected Bluetooth after previously choosing
+Mac mini Speakers. The reverse switch and non-HATOR retention through the
+new app UI remain pending dedicated end-to-end verification. Additional USB-C
+tests are deferred.
 
 ## Context-dependent capabilities
 

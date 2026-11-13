@@ -146,6 +146,7 @@ struct HeadBridgeApp: App {
         let manager = HeadphoneManager(providers: [bowersWilkins, sony, oppo, hator])
         let batteryHistory = BatteryHistoryStore(providers: [bowersWilkins, sony, oppo, hator])
         manager.installAudioDeviceDiscovery(systemAudio: systemAudio)
+        hator.installAudioHandoff(systemAudio: systemAudio)
         manager.installVolumeSynchronization(settings: settings, systemAudio: systemAudio)
 
         _manager = StateObject(wrappedValue: manager)

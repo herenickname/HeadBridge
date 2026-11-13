@@ -194,6 +194,52 @@ final class SystemAudioController: ObservableObject {
         }
     }
 
+    /// Core Audio PCM format exposed by macOS, not the radio-link codec.
+    static func outputFormat(for device: SystemAudioDevice) -> String? {
+        var rateAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var rate: Float64 = 0
+        var rateSize = UInt32(MemoryLayout<Float64>.size)
+        guard
+            AudioObjectGetPropertyData(
+                device.id, &rateAddress, 0, nil, &rateSize, &rate
+            ) == noErr, rate > 0
+        else { return nil }
+
+        var channelAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var bufferSize: UInt32 = 0
+        var channels = 0
+        if AudioObjectGetPropertyDataSize(
+            device.id, &channelAddress, 0, nil, &bufferSize
+        ) == noErr, bufferSize >= MemoryLayout<AudioBufferList>.size {
+            let raw = UnsafeMutableRawPointer.allocate(
+                byteCount: Int(bufferSize),
+                alignment: MemoryLayout<AudioBufferList>.alignment
+            )
+            defer { raw.deallocate() }
+            if AudioObjectGetPropertyData(
+                device.id, &channelAddress, 0, nil, &bufferSize, raw
+            ) == noErr {
+                let buffers = UnsafeMutableAudioBufferListPointer(
+                    raw.assumingMemoryBound(to: AudioBufferList.self)
+                )
+                channels = buffers.reduce(0) { $0 + Int($1.mNumberChannels) }
+            }
+        }
+
+        let rateText = String(format: "%.1f", rate / 1_000)
+        if channels == 2 { return "\(rateText) kHz · stereo" }
+        if channels > 0 { return "\(rateText) kHz · \(channels) channels" }
+        return "\(rateText) kHz"
+    }
+
     func setVolume(_ newValue: Float) {
         guard let id = defaultDeviceID else { return }
         let clamped = min(1, max(0, newValue))

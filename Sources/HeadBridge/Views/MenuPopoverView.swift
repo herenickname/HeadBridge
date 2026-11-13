@@ -427,6 +427,28 @@ struct MenuPopoverView: View {
 
     private var hatorControls: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let radio = hator.displayedRadioMode {
+                menuSection("Connection") {
+                    SelectionPopoverRow(
+                        "Wireless mode",
+                        value: radio.title,
+                        icon: "antenna.radiowaves.left.and.right",
+                        options: HatorRadioMode.allCases,
+                        selected: radio,
+                        optionTitle: { $0.title },
+                        footer: "Switches the headset radio; follows the Mac audio output only if HATOR was selected.",
+                        onSelect: hator.setRadioMode
+                    )
+                    .disabled(!hator.canChangeRadioMode)
+                    if let error = hator.radioSwitchError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 6)
+                    }
+                }
+            }
             if hator.capabilities.contains(.noiseControl) {
                 menuSection("Noise Control") {
                     ForEach(hator.supportedNoiseModes) { mode in
