@@ -38,7 +38,7 @@ private final class HatorPlaybackActivityMonitor {
         onChange?(false)
     }
 
-    private func refresh() {
+    func refresh() {
         guard let deviceID else { return }
         var address = Self.propertyAddress()
         var isRunning: UInt32 = 0
@@ -91,7 +91,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     @Published private(set) var bluetoothAudioPlaying = false
 
     var canChangeSpatialAudio: Bool {
-        connectionState == .ready && audioRoute == .bluetooth && bluetoothAudioPlaying
+        connectionState == .ready && audioRoute == .bluetooth
             && capabilities.contains(.spatialAudio) && spatialEnabled != nil && !spatialUpdatePending
     }
     @Published private(set) var spatialUpdatePending = false
@@ -108,6 +108,10 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
 
     private let client = HatorBLEClient()
     private let playbackMonitor = HatorPlaybackActivityMonitor()
+    private let silentAudio = HatorSilentAudioStream()
+    private var bluetoothOutputUID: String?
+    private var waitingForSilentPlayback: Bool?
+    private var spatialOperationGeneration = 0
     private let logger = Logger(subsystem: "io.github.herenickname.HeadBridge", category: "Hator")
     private var hasAudioOutput = false
     private var hasPairedBluetoothDevice = false
@@ -122,7 +126,19 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         playbackMonitor.onChange = { [weak self] isRunning in
             guard let self else { return }
             if self.bluetoothAudioPlaying != isRunning { self.bluetoothAudioPlaying = isRunning }
-            if !isRunning { self.spatialControlError = nil }
+            if isRunning, let requested = self.waitingForSilentPlayback {
+                self.waitingForSilentPlayback = nil
+                self.sendSpatialAudio(requested)
+            } else if !isRunning, self.spatialUpdatePending,
+                self.waitingForSilentPlayback == nil, !self.silentAudio.isRunning,
+                let bluetoothOutputUID = self.bluetoothOutputUID
+            {
+                // The user may pause the player while RCSP readback is still
+                // pending. Keep the Bluetooth audio path open until completion.
+                if !self.silentAudio.start(deviceUID: bluetoothOutputUID) {
+                    self.logger.warning("Unable to maintain silent output during Spatial update")
+                }
+            }
         }
         client.onConnection = { [weak self] state in
             Task { @MainActor [weak self] in self?.applyConnection(state) }
@@ -170,6 +186,8 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
 
     func updateActiveAudioDevice(_ device: SystemAudioDevice?) {
         let next = device.map(HatorAudioRoute.forDevice) ?? .none
+        if next != .bluetooth { cancelSpatialAudioOperation() }
+        bluetoothOutputUID = next == .bluetooth ? device?.uid : nil
         playbackMonitor.observe(deviceID: next == .bluetooth ? device?.id : nil)
         guard next != audioRoute else { return }
         audioRoute = next
@@ -217,6 +235,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     func shutdown() {
+        cancelSpatialAudioOperation()
         playbackMonitor.stop()
         client.shutdown()
         client.onConnection = nil
@@ -264,10 +283,69 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     func setSpatialAudio(_ enabled: Bool) {
-        guard canChangeSpatialAudio else { return }
+        guard canChangeSpatialAudio, spatialEnabled != enabled else { return }
         spatialControlError = nil
         spatialUpdatePending = true
+        spatialOperationGeneration &+= 1
+        let token = spatialOperationGeneration
+
+        // Real Bluetooth playback already satisfies the headset's requirement.
+        if bluetoothAudioPlaying {
+            sendSpatialAudio(enabled)
+        } else {
+            // Temporarily open a silent output stream on the headset, *not*
+            // on the system default output. Do not send RCSP until Core Audio
+            // confirms that the HATOR Bluetooth route is running.
+            guard let bluetoothOutputUID, silentAudio.start(deviceUID: bluetoothOutputUID) else {
+                finishSpatialAudioOperation(error: "Cannot start Bluetooth audio for Spatial Audio.")
+                return
+            }
+            waitingForSilentPlayback = enabled
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self, self.spatialOperationGeneration == token,
+                    self.waitingForSilentPlayback != nil
+                else { return }
+                self.playbackMonitor.refresh()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                guard let self, self.spatialOperationGeneration == token,
+                    self.waitingForSilentPlayback != nil
+                else { return }
+                self.finishSpatialAudioOperation(error: "Bluetooth audio did not start.")
+            }
+        }
+
+        // Never leave the silent stream open if a BLE transaction stalls.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+            guard let self, self.spatialOperationGeneration == token,
+                self.spatialUpdatePending
+            else { return }
+            self.client.cancelQueuedVendor(0x02)
+            self.finishSpatialAudioOperation(error: "Spatial Audio change timed out.")
+        }
+    }
+
+    private func sendSpatialAudio(_ enabled: Bool) {
+        guard spatialUpdatePending, audioRoute == .bluetooth,
+            connectionState == .ready
+        else {
+            finishSpatialAudioOperation(error: nil)
+            return
+        }
         client.setVendor(0x02, value: enabled ? 2 : 0)
+    }
+
+    private func finishSpatialAudioOperation(error: String?) {
+        silentAudio.stop()
+        waitingForSilentPlayback = nil
+        spatialOperationGeneration &+= 1
+        spatialUpdatePending = false
+        spatialControlError = error
+    }
+
+    private func cancelSpatialAudioOperation() {
+        if spatialUpdatePending { client.cancelQueuedVendor(0x02) }
+        finishSpatialAudioOperation(error: nil)
     }
 
     func setRGB(_ enabled: Bool) {
@@ -354,10 +432,10 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     private func didVerifyWrite(code: UInt8, value: UInt8, verified: Bool) {
         logger.notice("BLE write verification code=\(code) value=\(value) confirmed=\(verified)")
         let wasRestore = pendingRestoreCodes.remove(code) != nil
-        if code == 0x02, audioRoute == .bluetooth {
-            spatialUpdatePending = false
-            spatialControlError =
-                verified ? nil : "Headset did not confirm the Spatial Audio change."
+        if code == 0x02, spatialUpdatePending {
+            finishSpatialAudioOperation(
+                error: verified ? nil : "Headset did not confirm the Spatial Audio change."
+            )
         }
         guard verified, !wasRestore, let connectedDeviceID else { return }
         switch code {
@@ -389,6 +467,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     private func clearPublishedValues() {
+        cancelSpatialAudioOperation()
         batteryPercent = nil
         isCharging = nil
         codecName = nil

@@ -227,8 +227,8 @@ private struct GenericProviderSettingsView: View {
                                 )
                             )
                             .disabled(!hator.canChangeSpatialAudio)
-                            .help("Spatial Audio is available while playing through HATOR Bluetooth audio.")
-                            if let error = hator.spatialControlError, hator.bluetoothAudioPlaying {
+                            .help("HeadBridge briefly plays silence over Bluetooth if needed.")
+                            if let error = hator.spatialControlError {
                                 Text(error)
                                     .font(.caption)
                                     .foregroundStyle(.orange)

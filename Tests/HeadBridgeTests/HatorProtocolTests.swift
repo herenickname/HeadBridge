@@ -3,6 +3,15 @@ import XCTest
 @testable import HeadBridge
 
 final class HatorProtocolTests: XCTestCase {
+    @MainActor
+    func testSilentPlaybackRequiresAnExplicitAudioDestination() {
+        let stream = HatorSilentAudioStream()
+        XCTAssertFalse(stream.start(deviceUID: ""))
+        XCTAssertFalse(stream.isRunning)
+        stream.stop()
+        XCTAssertFalse(stream.isRunning)
+    }
+
     func testExactVendorCommands() {
         XCTAssertEqual(
             HatorRCSP.vendorGet(0x02, sequence: 0x71),
