@@ -4,6 +4,66 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// The native segmented control supports disabling an individual transport.
+/// A SwiftUI segmented Picker only reliably disables the entire control.
+private struct HatorRadioModePicker: NSViewRepresentable {
+    let selected: HatorRadioMode?
+    let canChange: Bool
+    let dongleAvailable: Bool
+    let onSelect: (HatorRadioMode) -> Void
+
+    func makeNSView(context: Context) -> NSSegmentedControl {
+        let control = NSSegmentedControl(
+            labels: HatorRadioMode.allCases.map(\.title),
+            trackingMode: .selectOne,
+            target: context.coordinator,
+            action: #selector(Coordinator.didSelect(_:))
+        )
+        control.segmentStyle = .rounded
+        control.segmentDistribution = .fillEqually
+        control.setAccessibilityLabel("Wireless mode")
+        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return control
+    }
+
+    func updateNSView(_ control: NSSegmentedControl, context: Context) {
+        context.coordinator.onSelect = onSelect
+        control.isEnabled = canChange
+        for (index, mode) in HatorRadioMode.allCases.enumerated() {
+            let available = mode == .bluetooth || dongleAvailable
+            control.setEnabled(canChange && available, forSegment: index)
+            control.setToolTip(
+                available ? nil : "Connect the 2.4 GHz USB dongle first.",
+                forSegment: index
+            )
+        }
+        control.selectedSegment =
+            selected.flatMap {
+                HatorRadioMode.allCases.firstIndex(of: $0)
+            } ?? -1
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelect: onSelect)
+    }
+
+    final class Coordinator: NSObject {
+        var onSelect: (HatorRadioMode) -> Void
+
+        init(onSelect: @escaping (HatorRadioMode) -> Void) {
+            self.onSelect = onSelect
+        }
+
+        @objc func didSelect(_ sender: NSSegmentedControl) {
+            let index = sender.selectedSegment
+            guard index >= 0, index < HatorRadioMode.allCases.count,
+                sender.isEnabled(forSegment: index)
+            else { return }
+            onSelect(HatorRadioMode.allCases[index])
+        }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var manager: HeadphoneManager
     @EnvironmentObject private var controller: BowersWilkinsProvider
@@ -64,6 +124,7 @@ struct ContentView: View {
                 OppoDeviceSettingsView(deviceName: device.name)
             } else {
                 GenericProviderSettingsView(provider: provider, deviceName: device.name)
+                    .id(device.id)
             }
         } else {
             ContentUnavailableView("Headphones unavailable", systemImage: "headphones")
@@ -151,9 +212,32 @@ private struct HeadphoneDeviceSidebarRow: View {
     }
 }
 
-private struct GenericProviderSettingsView: View {
+/// Existential providers are not directly observable by SwiftUI. Forward the
+/// concrete provider's changes so generic controls display confirmed readback.
+@MainActor
+private final class GenericProviderSettingsObserver: ObservableObject {
     let provider: any HeadphoneProvider
+    private var subscription: AnyCancellable?
+
+    init(provider: any HeadphoneProvider) {
+        self.provider = provider
+        subscription = provider.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.objectWillChange.send() }
+    }
+}
+
+private struct GenericProviderSettingsView: View {
+    @EnvironmentObject private var systemAudio: SystemAudioController
+    @StateObject private var observer: GenericProviderSettingsObserver
     let deviceName: String
+
+    init(provider: any HeadphoneProvider, deviceName: String) {
+        _observer = StateObject(wrappedValue: GenericProviderSettingsObserver(provider: provider))
+        self.deviceName = deviceName
+    }
+
+    private var provider: any HeadphoneProvider { observer.provider }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -182,6 +266,44 @@ private struct GenericProviderSettingsView: View {
             Divider()
             Form {
                 Section("Connection") {
+                    if let hator = provider as? HatorProvider {
+                        if hator.audioRoute == .wiredUSB {
+                            LabeledContent("Audio connection", value: "Wired USB-C")
+                            Text(
+                                "USB-C audio is active. Wireless controls need a separate BLE connection; a cable cannot be selected remotely."
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Wireless mode")
+                            HatorRadioModePicker(
+                                selected: hator.displayedRadioMode,
+                                canChange: hator.canChangeRadioMode,
+                                dongleAvailable: hator.isRadioModeAvailable(.dongle),
+                                onSelect: hator.setRadioMode
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+                        if hator.requestedRadioMode != nil {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("Switching headset and checking macOS audio…")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        } else if hator.displayedRadioMode == nil,
+                            hator.connectionState == .ready
+                        {
+                            Text("Reading wireless mode from the headset…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let error = hator.radioSwitchError {
+                            Text(error).font(.caption).foregroundStyle(.orange)
+                        }
+                    }
+
                     Toggle(
                         "Restore settings on connect",
                         isOn: Binding(
@@ -191,6 +313,57 @@ private struct GenericProviderSettingsView: View {
                     Text("Reapplies this Mac's saved profile after the control connection is ready.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+
+                if let hator = provider as? HatorProvider {
+                    if hator.capabilities.contains(.spatialAudio), let spatial = hator.spatialEnabled {
+                        Section("Spatial Audio") {
+                            Toggle(
+                                "Spatial Audio",
+                                isOn: Binding(
+                                    get: { hator.spatialEnabled ?? spatial },
+                                    set: { hator.setSpatialAudio($0) }
+                                )
+                            )
+                            .disabled(!hator.canChangeSpatialAudio)
+                            .help("HeadBridge briefly plays silence over Bluetooth if needed.")
+                            if let error = hator.spatialControlError {
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                    if hator.rgbEnabled != nil || hator.microphoneMuted != nil {
+                        Section("Headset Controls") {
+                            if let rgb = hator.rgbEnabled {
+                                Toggle(
+                                    "RGB lighting",
+                                    isOn: Binding(
+                                        get: { hator.rgbEnabled ?? rgb },
+                                        set: { hator.setRGB($0) }
+                                    ))
+                            }
+                            if let muted = hator.microphoneMuted {
+                                Toggle(
+                                    "Mute microphone",
+                                    isOn: Binding(
+                                        get: { hator.microphoneMuted ?? muted },
+                                        set: { hator.setMicrophoneMuted($0) }
+                                    ))
+                            }
+                        }
+                    }
+                    if hator.capabilities.contains(.equalizer) {
+                        Section("Equalizer") {
+                            HatorEqualizerEditor(provider: hator)
+                        }
+                    }
+                    if let mode = hator.noiseMode, !hator.capabilities.contains(.noiseControl) {
+                        Section("Noise Control") {
+                            LabeledContent("Current mode", value: mode.title)
+                        }
+                    }
                 }
 
                 if provider.capabilities.contains(.noiseControl) {
@@ -226,6 +399,37 @@ private struct GenericProviderSettingsView: View {
                     if let codec = provider.codecName {
                         LabeledContent("Codec") { Text(codec).foregroundStyle(.secondary) }
                     }
+                    if let hator = provider as? HatorProvider {
+                        if hator.audioRoute != .none {
+                            LabeledContent("Active Mac audio", value: hator.audioRoute.title)
+                        }
+                        if let mode = hator.displayedRadioMode {
+                            LabeledContent("Wireless transport", value: mode.title)
+                            if let output = systemAudio.devices.first(where: {
+                                HatorAudioRoute.forDevice($0) == mode.audioRoute
+                            }) {
+                                LabeledContent("macOS output") {
+                                    Text(systemAudio.defaultDeviceID == output.id ? "Selected" : "Available")
+                                        .foregroundStyle(.secondary)
+                                }
+                                if let format = SystemAudioController.outputFormat(for: output) {
+                                    LabeledContent("macOS output format", value: format)
+                                }
+                            }
+                            if mode == .bluetooth {
+                                LabeledContent("Active Bluetooth codec", value: "Not exposed by macOS")
+                                LabeledContent("Headset supports", value: "SBC, AAC, LDAC")
+                            } else {
+                                LabeledContent("2.4 GHz radio codec", value: "Not reported by dongle")
+                            }
+                        }
+                        if let volume = hator.deviceVolumeRaw {
+                            LabeledContent("Headset volume (raw)", value: String(volume))
+                        }
+                        if let preset = hator.equalizerPresets.first(where: { $0.id == hator.equalizer?.mode }) {
+                            LabeledContent("EQ preset", value: preset.title)
+                        }
+                    }
                 }
 
                 BatteryHistorySection(
@@ -240,6 +444,95 @@ private struct GenericProviderSettingsView: View {
             .padding(.vertical, 8)
         }
         .navigationTitle(provider.vendorName)
+    }
+}
+
+@MainActor
+private struct HatorEqualizerEditor: View {
+    @ObservedObject var provider: HatorProvider
+    @State private var draft: [Double] = Array(repeating: 0, count: 10)
+    @State private var hasEdits = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker(
+                "Preset",
+                selection: Binding(
+                    get: { provider.equalizer?.mode ?? 0 },
+                    set: { provider.setEqualizerPreset($0) }
+                )
+            ) {
+                ForEach(provider.equalizerPresets) { preset in
+                    Text(preset.title).tag(preset.id)
+                }
+            }
+
+            Text("Custom EQ · 10 bands")
+                .font(.subheadline.weight(.semibold))
+            ForEach(HatorDSP.frequencies.indices, id: \.self) { index in
+                HStack(spacing: 10) {
+                    Text("\(HatorDSP.frequencies[index]) Hz")
+                        .font(.caption)
+                        .frame(width: 69, alignment: .leading)
+                    Slider(
+                        value: Binding(
+                            get: {
+                                min(
+                                    Double(HatorDSP.editableRange.upperBound),
+                                    max(Double(HatorDSP.editableRange.lowerBound), draft[index]))
+                            },
+                            set: {
+                                draft[index] = $0; hasEdits = true
+                            }
+                        ), in: Double(HatorDSP.editableRange.lowerBound)...Double(HatorDSP.editableRange.upperBound),
+                        step: 1)
+                    Text(String(format: "%+d", Int(draft[index])))
+                        .monospacedDigit()
+                        .font(.caption)
+                        .frame(width: 32, alignment: .trailing)
+                }
+            }
+            HStack {
+                Button("Apply Custom EQ") {
+                    provider.setCustomEqualizer(draft.map { Int($0) })
+                    hasEdits = false
+                }
+                .disabled(
+                    provider.connectionState != .ready || !hasEdits
+                        || !draft.allSatisfy({ HatorDSP.editableRange.contains(Int($0)) }))
+                Button("Discard edits") { syncDraft() }
+                    .disabled(!hasEdits)
+            }
+            if draft.contains(where: { !HatorDSP.editableRange.contains(Int($0)) }) {
+                Text(
+                    "Stored gains outside the currently tested editing range are preserved. Adjust those bands before applying changes."
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+            Text(
+                "Settings are confirmed by a fresh device read. EQ effect through USB audio has not yet been verified."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .onAppear(perform: syncDraft)
+        .onChange(of: provider.equalizerPresets) { _, _ in
+            if !hasEdits { syncDraft() }
+        }
+        .onChange(of: provider.equalizer) { _, _ in
+            if !hasEdits { syncDraft() }
+        }
+    }
+
+    private func syncDraft() {
+        let values =
+            provider.equalizer?.mode == 8
+            ? provider.equalizer?.gains
+            : provider.equalizerPresets.first(where: { $0.id == 8 })?.gains
+        draft = (values?.count == 10 ? values ?? [] : Array(repeating: 0, count: 10))
+            .map(Double.init)
+        hasEdits = false
     }
 }
 

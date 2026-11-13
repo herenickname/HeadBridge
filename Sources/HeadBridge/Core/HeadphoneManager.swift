@@ -30,6 +30,8 @@ final class HeadphoneManager: ObservableObject {
     private var inventoryGeneration = 0
     private var isRefreshingInventory = false
     private var needsInventoryRefresh = false
+    private var lastPairedDevices: [BluetoothPairedDevice] = []
+    private var lastAudioDevices: [SystemAudioDevice] = []
 
     private static let inventoryQueue = DispatchQueue(
         label: "io.github.herenickname.HeadBridge.bluetooth-device-discovery",
@@ -67,15 +69,21 @@ final class HeadphoneManager: ObservableObject {
     }
 
     func updateAudioConnectedDevices(_ devices: [SystemAudioDevice]) {
+        lastAudioDevices = devices
         providers.forEach { $0.updateAudioConnectedDevices(devices) }
+        applyBluetoothPairedDevices(lastPairedDevices)
     }
 
     func installAudioDeviceDiscovery(systemAudio: SystemAudioController) {
         systemAudio.$devices
+            .combineLatest(systemAudio.$defaultDeviceID)
             .receive(on: RunLoop.main)
-            .sink { [weak self] devices in
-                self?.updateAudioConnectedDevices(devices)
-                self?.refreshBluetoothDevices()
+            .sink { [weak self] devices, activeID in
+                guard let self else { return }
+                self.updateAudioConnectedDevices(devices)
+                let active = devices.first(where: { $0.id == activeID })
+                self.providers.forEach { $0.updateActiveAudioDevice(active) }
+                self.refreshBluetoothDevices()
             }
             .store(in: &cancellables)
     }
@@ -122,9 +130,10 @@ final class HeadphoneManager: ObservableObject {
     }
 
     func applyBluetoothPairedDevices(_ devices: [BluetoothPairedDevice]) {
+        lastPairedDevices = devices
         providers.forEach { $0.updateBluetoothPairedDevices(devices) }
 
-        let recognized = devices.compactMap { device -> RecognizedHeadphoneDevice? in
+        var recognized = devices.compactMap { device -> RecognizedHeadphoneDevice? in
             guard
                 let provider = providers.first(where: {
                     $0.recognizesBluetoothDevice(named: device.name)
@@ -141,7 +150,25 @@ final class HeadphoneManager: ObservableObject {
                 vendorName: provider.vendorName
             )
         }
-        .sorted {
+
+        // USB-dongle audio can be present while the Bluetooth device is not in
+        // the paired inventory. Expose one physical-device entry, never one per route.
+        for audio in lastAudioDevices {
+            guard let provider = providers.first(where: { $0.recognizesExternalAudioDevice(audio) }),
+                !recognized.contains(where: { $0.providerID == provider.providerID })
+            else { continue }
+            recognized.append(
+                RecognizedHeadphoneDevice(
+                    id: "\(provider.providerID):external:\(audio.uid)",
+                    deviceID: "external:\(audio.uid)",
+                    name: audio.name,
+                    address: "",
+                    isConnected: true,
+                    providerID: provider.providerID,
+                    vendorName: provider.vendorName
+                ))
+        }
+        recognized.sort {
             let vendorOrder = $0.vendorName.localizedCaseInsensitiveCompare($1.vendorName)
             if vendorOrder != .orderedSame { return vendorOrder == .orderedAscending }
             return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending

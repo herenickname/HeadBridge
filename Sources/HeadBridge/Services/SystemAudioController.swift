@@ -1,12 +1,79 @@
 import AudioToolbox
 import CoreAudio
 import Foundation
+import IOKit
+
+/// USB metadata is resolved via IOKit, rather than guessing from Core Audio
+/// names: the Phoenix 2 wired interface and dongle share a USB VID/PID/name.
+enum HatorUSBDeviceInventory {
+    private static let audioUIDPrefix =
+        "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:"
+
+    static func serial(fromCoreAudioUID uid: String) -> String? {
+        guard uid.lowercased().hasPrefix(audioUIDPrefix.lowercased()) else { return nil }
+        let suffix = uid.dropFirst(audioUIDPrefix.count)
+        let parts = suffix.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty, Int(parts[1]) != nil else { return nil }
+        return String(parts[0])
+    }
+
+    static func deviceClassesBySerial() -> [String: UInt8] {
+        var iterator: io_iterator_t = 0
+        guard
+            IOServiceGetMatchingServices(
+                kIOMainPortDefault, IOServiceMatching("IOUSBHostDevice"), &iterator
+            ) == KERN_SUCCESS
+        else { return [:] }
+        defer { IOObjectRelease(iterator) }
+
+        func property(_ entry: io_registry_entry_t, _ key: String) -> Any? {
+            IORegistryEntryCreateCFProperty(
+                entry, key as CFString, kCFAllocatorDefault, 0
+            )?.takeRetainedValue()
+        }
+
+        var result: [String: UInt8] = [:]
+        var conflicts: Set<String> = []
+        while case let device = IOIteratorNext(iterator), device != 0 {
+            defer { IOObjectRelease(device) }
+            // Match the verified JieLi Phoenix 2 USB VID/PID, not an
+            // arbitrary USB device with the same display name.
+            guard (property(device, "idVendor") as? Int) == 0x379A,
+                (property(device, "idProduct") as? Int) == 0x6303,
+                let serial = property(device, "USB Serial Number") as? String,
+                !serial.isEmpty,
+                let rawClass = property(device, "bDeviceClass") as? Int,
+                let deviceClass = UInt8(exactly: rawClass)
+            else { continue }
+
+            if let existing = result[serial], existing != deviceClass {
+                conflicts.insert(serial)
+            } else {
+                result[serial] = deviceClass
+            }
+        }
+        for serial in conflicts { result.removeValue(forKey: serial) }
+        return result
+    }
+}
 
 struct SystemAudioDevice: Identifiable, Equatable {
     let id: AudioDeviceID
     let uid: String
     let name: String
     let transportType: UInt32
+    let usbDeviceClass: UInt8?
+
+    init(
+        id: AudioDeviceID, uid: String, name: String, transportType: UInt32,
+        usbDeviceClass: UInt8? = nil
+    ) {
+        self.id = id
+        self.uid = uid
+        self.name = name
+        self.transportType = transportType
+        self.usbDeviceClass = usbDeviceClass
+    }
 
     var isBluetooth: Bool {
         transportType == kAudioDeviceTransportTypeBluetooth || transportType == kAudioDeviceTransportTypeBluetoothLE
@@ -71,15 +138,16 @@ final class SystemAudioController: ObservableObject {
     func refresh() {
         guard !isShutdown else { return }
         let allDeviceIDs = Self.allDeviceIDs()
+        let usbClassesBySerial = HatorUSBDeviceInventory.deviceClassesBySerial()
         let outputDevices =
             allDeviceIDs
             .filter(Self.hasOutputStreams)
-            .compactMap(Self.makeDevice)
+            .compactMap { Self.makeDevice($0, usbClassesBySerial: usbClassesBySerial) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         let availableInputDevices =
             allDeviceIDs
             .filter(Self.hasInputStreams)
-            .compactMap(Self.makeDevice)
+            .compactMap { Self.makeDevice($0, usbClassesBySerial: usbClassesBySerial) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
         if devices != outputDevices { devices = outputDevices }
@@ -192,6 +260,52 @@ final class SystemAudioController: ObservableObject {
         } else {
             errorMessage = "Could not switch output (Core Audio \(status))"
         }
+    }
+
+    /// Core Audio PCM format exposed by macOS, not the radio-link codec.
+    static func outputFormat(for device: SystemAudioDevice) -> String? {
+        var rateAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var rate: Float64 = 0
+        var rateSize = UInt32(MemoryLayout<Float64>.size)
+        guard
+            AudioObjectGetPropertyData(
+                device.id, &rateAddress, 0, nil, &rateSize, &rate
+            ) == noErr, rate > 0
+        else { return nil }
+
+        var channelAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var bufferSize: UInt32 = 0
+        var channels = 0
+        if AudioObjectGetPropertyDataSize(
+            device.id, &channelAddress, 0, nil, &bufferSize
+        ) == noErr, bufferSize >= MemoryLayout<AudioBufferList>.size {
+            let raw = UnsafeMutableRawPointer.allocate(
+                byteCount: Int(bufferSize),
+                alignment: MemoryLayout<AudioBufferList>.alignment
+            )
+            defer { raw.deallocate() }
+            if AudioObjectGetPropertyData(
+                device.id, &channelAddress, 0, nil, &bufferSize, raw
+            ) == noErr {
+                let buffers = UnsafeMutableAudioBufferListPointer(
+                    raw.assumingMemoryBound(to: AudioBufferList.self)
+                )
+                channels = buffers.reduce(0) { $0 + Int($1.mNumberChannels) }
+            }
+        }
+
+        let rateText = String(format: "%.1f", rate / 1_000)
+        if channels == 2 { return "\(rateText) kHz · stereo" }
+        if channels > 0 { return "\(rateText) kHz · \(channels) channels" }
+        return "\(rateText) kHz"
     }
 
     func setVolume(_ newValue: Float) {
@@ -434,11 +548,24 @@ final class SystemAudioController: ObservableObject {
         return AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr && size > 0
     }
 
-    private static func makeDevice(_ id: AudioDeviceID) -> SystemAudioDevice? {
+    private static func makeDevice(
+        _ id: AudioDeviceID, usbClassesBySerial: [String: UInt8]
+    ) -> SystemAudioDevice? {
         guard let name = stringProperty(id, selector: kAudioObjectPropertyName) else { return nil }
         let uid = stringProperty(id, selector: kAudioDevicePropertyDeviceUID) ?? String(id)
         let transport = uint32Property(id, selector: kAudioDevicePropertyTransportType) ?? 0
-        return SystemAudioDevice(id: id, uid: uid, name: name, transportType: transport)
+        let usbClass: UInt8?
+        if transport == kAudioDeviceTransportTypeUSB,
+            let serial = HatorUSBDeviceInventory.serial(fromCoreAudioUID: uid)
+        {
+            usbClass = usbClassesBySerial[serial]
+        } else {
+            usbClass = nil
+        }
+        return SystemAudioDevice(
+            id: id, uid: uid, name: name, transportType: transport,
+            usbDeviceClass: usbClass
+        )
     }
 
     private static func stringProperty(_ id: AudioObjectID, selector: AudioObjectPropertySelector) -> String? {

@@ -17,7 +17,8 @@ let package = Package(
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle")
             ],
-            path: "Sources/HeadBridge"
+            path: "Sources/HeadBridge",
+            resources: [.copy("Resources/jl-auth-bundle.js")]
         ),
         .testTarget(
             name: "HeadBridgeTests",

@@ -2,10 +2,61 @@ import AppKit
 import CoreAudio
 import SwiftUI
 
+/// The Bluetooth endpoint and 2.4 GHz receiver are two routes for one
+/// wireless headset. Only these two collapse into one menu row; direct wired
+/// USB-C audio remains an independently selectable output.
+enum MenuAudioOutputGrouping {
+    static func displayName(
+        _ device: SystemAudioDevice, among devices: [SystemAudioDevice]
+    ) -> String {
+        let route = HatorAudioRoute.forDevice(device)
+        switch route {
+        case .wiredUSB:
+            return "\(device.name) · Wired USB-C"
+        case .bluetooth, .usbDongle:
+            let wiredPresent = devices.contains {
+                HatorAudioRoute.forDevice($0) == .wiredUSB
+            }
+            return wiredPresent ? "\(device.name) · \(route.title)" : device.name
+        case .none:
+            return device.name
+        }
+    }
+
+    static func visibleOutputs(
+        _ devices: [SystemAudioDevice],
+        selectedID: AudioDeviceID?,
+        hatorRadioMode: HatorRadioMode?
+    ) -> [SystemAudioDevice] {
+        let wirelessDevices = devices.filter { HatorAudioRoute.forDevice($0).isWireless }
+        guard wirelessDevices.count > 1 else { return devices }
+
+        // A selected HATOR endpoint must always remain visibly selected.
+        // Otherwise prefer the transport reported by the headset, so clicking
+        // the single row selects an audio route that is actually usable.
+        let representative =
+            wirelessDevices.first { $0.id == selectedID }
+            ?? hatorRadioMode.flatMap { mode in
+                wirelessDevices.first { HatorAudioRoute.forDevice($0) == mode.audioRoute }
+            }
+            ?? wirelessDevices.first { HatorAudioRoute.forDevice($0) == .bluetooth }
+            ?? wirelessDevices[0]
+
+        var includedWireless = false
+        return devices.compactMap { device in
+            guard HatorAudioRoute.forDevice(device).isWireless else { return device }
+            guard !includedWireless else { return nil }
+            includedWireless = true
+            return representative
+        }
+    }
+}
+
 struct MenuPopoverView: View {
     @EnvironmentObject private var manager: HeadphoneManager
     @EnvironmentObject private var controller: BowersWilkinsProvider
     @EnvironmentObject private var sony: SonyMDRProvider
+    @EnvironmentObject private var hator: HatorProvider
     @EnvironmentObject private var systemAudio: SystemAudioController
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.openWindow) private var openWindow
@@ -207,7 +258,12 @@ struct MenuPopoverView: View {
     }
 
     private var outputSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let visibleOutputs = MenuAudioOutputGrouping.visibleOutputs(
+            systemAudio.devices,
+            selectedID: systemAudio.defaultDeviceID,
+            hatorRadioMode: hator.displayedRadioMode
+        )
+        return VStack(alignment: .leading, spacing: 4) {
             Text("Output")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -221,7 +277,7 @@ struct MenuPopoverView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
             } else {
-                ForEach(systemAudio.devices) { device in
+                ForEach(visibleOutputs) { device in
                     outputDevice(device)
                 }
             }
@@ -255,6 +311,10 @@ struct MenuPopoverView: View {
         let providerReady = provider?.connectionState == .ready
         let expanded = expandedDeviceID == device.id
 
+        let displayName = MenuAudioOutputGrouping.displayName(
+            device, among: systemAudio.devices
+        )
+
         return Button {
             if provider != nil && selected && providerReady {
                 withAnimation(.easeInOut(duration: 0.18)) {
@@ -280,9 +340,10 @@ struct MenuPopoverView: View {
                 .frame(width: 26, height: 26)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(device.name)
+                    Text(displayName)
                         .font(.system(size: 14))
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     if let provider, let battery = provider.batteryPercent {
                         HStack(spacing: 4) {
                             Image(systemName: HeadphoneBatterySymbol.name(for: battery))
@@ -419,7 +480,82 @@ struct MenuPopoverView: View {
             bowersWilkinsControls
         } else if provider.providerID == sony.providerID {
             sonyControls
+        } else if provider.providerID == hator.providerID {
+            hatorControls
         }
+    }
+
+    private var hatorControls: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            menuSection("Connection") {
+                SelectionPopoverRow(
+                    "Wireless mode",
+                    value: hator.displayedRadioMode?.title ?? "Unavailable",
+                    icon: "antenna.radiowaves.left.and.right",
+                    options: HatorRadioMode.allCases,
+                    selected: hator.displayedRadioMode,
+                    optionTitle: { $0.title },
+                    optionEnabled: hator.isRadioModeAvailable,
+                    onSelect: hator.setRadioMode
+                )
+                .disabled(!hator.canChangeRadioMode)
+                if let error = hator.radioSwitchError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 6)
+                }
+            }
+            if hator.capabilities.contains(.noiseControl) {
+                menuSection("Noise Control") {
+                    ForEach(hator.supportedNoiseModes) { mode in
+                        modeRow(mode.title, icon: mode.icon, selected: hator.noiseMode == mode) {
+                            hator.setNoiseMode(mode)
+                        }
+                    }
+                }
+            }
+            if hator.capabilities.contains(.equalizer) {
+                menuSection("Equalizer") {
+                    SelectionPopoverRow(
+                        "EQ Preset",
+                        value: hator.equalizerPresets.first(where: { $0.id == hator.equalizer?.mode })?.title ?? "—",
+                        icon: "slider.horizontal.3",
+                        options: hator.equalizerPresets,
+                        selected: hator.equalizerPresets.first(where: { $0.id == hator.equalizer?.mode }),
+                        optionTitle: { $0.title },
+                        footer: "Edit the 10-band Custom EQ in HeadBridge Settings",
+                        onSelect: { hator.setEqualizerPreset($0.id) }
+                    )
+                }
+            }
+            if hator.capabilities.contains(.spatialAudio), let spatial = hator.spatialEnabled {
+                menuSection("Spatial Audio") {
+                    toggleRow("Spatial Audio", icon: "waveform", isOn: spatial, action: hator.setSpatialAudio)
+                        .disabled(!hator.canChangeSpatialAudio)
+                        .help("Automatically activates silent Bluetooth audio if needed")
+                    if let error = hator.spatialControlError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 6)
+                    }
+                }
+            }
+            if let rgb = hator.rgbEnabled {
+                menuSection("Headset Lighting") {
+                    toggleRow("RGB lighting", icon: "lightbulb", isOn: rgb, action: hator.setRGB)
+                }
+            }
+            if let muted = hator.microphoneMuted {
+                menuSection("Microphone") {
+                    toggleRow("Mute microphone", icon: "mic.slash", isOn: muted, action: hator.setMicrophoneMuted)
+                }
+            }
+        }
+        .background(expandedControlsSurface)
     }
 
     private var sonyControls: some View {
@@ -855,6 +991,7 @@ private struct SelectionPopoverRow<Option: Identifiable & Equatable>: View {
     let options: [Option]
     let selected: Option?
     let optionTitle: (Option) -> String
+    let optionEnabled: (Option) -> Bool
     let footer: String?
     let onSelect: (Option) -> Void
 
@@ -867,6 +1004,7 @@ private struct SelectionPopoverRow<Option: Identifiable & Equatable>: View {
         options: [Option],
         selected: Option?,
         optionTitle: @escaping (Option) -> String,
+        optionEnabled: @escaping (Option) -> Bool = { _ in true },
         footer: String? = nil,
         onSelect: @escaping (Option) -> Void
     ) {
@@ -876,6 +1014,7 @@ private struct SelectionPopoverRow<Option: Identifiable & Equatable>: View {
         self.options = options
         self.selected = selected
         self.optionTitle = optionTitle
+        self.optionEnabled = optionEnabled
         self.footer = footer
         self.onSelect = onSelect
     }
@@ -929,6 +1068,7 @@ private struct SelectionPopoverRow<Option: Identifiable & Equatable>: View {
                         .padding(.vertical, 5)
                     }
                     .buttonStyle(.plain)
+                    .disabled(!optionEnabled(option))
                 }
 
                 if let footer {

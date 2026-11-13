@@ -1,0 +1,193 @@
+# HATOR Phoenix 2 Wireless — provider integration notes
+
+Status: **experimental HeadBridge implementation; partially validated on physical hardware**. On 2026-11-12 (headset firmware `V0.0.116`), HeadBridge connected over BLE while USB-dongle audio was active, read battery, ANC, EQ, Spatial, RGB and microphone state, and verified ANC, EQ, RGB and microphone-mute writes. On 2026-11-13, Spatial switching, radio-mode switching and automatic macOS audio handoff were additionally tested on the physical headset. Physical radio loss, full power cycles and dongle unplug/replug still need testing. Direct wired USB-C audio enumeration and automatic macOS output selection have since been verified through physical cable unplug/replug; USB HID control in wired mode remains unverified.
+
+## Audio output is not the control transport
+
+Phoenix 2 Wireless can present a Bluetooth audio output or a 2.4 GHz USB-dongle audio output (`379A:6303`). Both must resolve to **one physical headset** and one HATOR provider instance. The provider should use one authenticated Bluetooth LE control session for either audio route; do not open a separate BLE connection for each audio output, and do not assume the dongle implements JieLi RCSP over USB HID.
+
+Local hardware tests confirmed that the 2.4 GHz USB audio output remained selected and audio continued normally while authenticated BLE commands toggled headset RGB on/off, with successful independent readback. Repeated BLE reconnects and a controlled in-process reconnect also succeeded. The earlier RGB-over-dongle tests were conducted with the separate research prototype; the HeadBridge app has since independently confirmed RGB and microphone-mute SET/GET while the dongle is the active audio output. Radio-loss and full power-cycle tests remain outstanding.
+
+Known BLE control endpoint: JieLi RCSP over GATT service `AE00`, write characteristic `AE01`, notify characteristic `AE02`, with verified mutual authentication. A strict advertised-service-filtered scan may miss this device; discovery must still narrowly validate the headset identity before connecting. Do not publish local identifiers, authentication material, or raw private captures.
+
+## Wired USB-C vs 2.4 GHz dongle
+
+The Phoenix 2 wired USB-C connection uses digital USB Audio, **not** the
+generic JieLi AUX/Line-in mode. Physical cable attach automatically creates a
+second Core Audio USB device; macOS can select it as the default output even
+while the dongle is still attached. The wired and dongle devices share the
+same reported name, manufacturer, VID 0x379A and PID 0x6303, so testing only
+name/VID/PID or the common Core Audio UID prefix is not sufficient.
+
+On 2026-11-13, physical USB-C unplug/replug while keeping the dongle
+installed confirmed:
+- **Wired headset**: USB device class `0xEF` (239), USB Audio output/input
+  and USB HID. It disappears when the cable is removed and comes back on
+  reconnect with the same USB serial.
+- **2.4 GHz dongle**: USB device class `0x00`, independent USB Audio
+  output/input and USB HID. It remained connected during the full test.
+- Both support 48 kHz stereo Core Audio output; this is the host digital PCM
+  format, not proof of how the 2.4 GHz wireless radio encodes sound.
+- BLE GETs for `FF/07` and SYS_INFO timed out with USB-C wired audio active;
+  the application also could not authenticate BLE control. There is currently
+  **no verified RCSP command to enter or exit Wired USB-C**.
+
+HeadBridge resolves the serial component of each verified JieLi Core Audio
+UID to an `IOUSBHostDevice` with matching VID/PID/USB serial using
+read-only IOKit registry properties. Device class `0x00` is classified as
+`.usbDongle`, and `0xEF` as `.wiredUSB`. Unexpected device classes, absent
+serials or ambiguous matches remain unclassified rather than being silently
+treated as dongles. **USB serials are matched dynamically, not hardcoded**.
+The two known USB configurations were validated on physical Phoenix 2
+firmware V0.0.116; other revisions may need new descriptors.
+
+The menu continues to combine **Bluetooth and the 2.4 GHz dongle** as one
+logical *wireless* row, but **Wired USB-C remains a separate selectable
+macOS audio output** with a distinct label. Direct wired audio is also
+indicated in Settings; wireless radio controls require authenticated BLE
+and remain unavailable while disconnected. The wired endpoint must never
+satisfy the radio selector's "dongle connected" prerequisite, or become a
+2.4 GHz target during automatic audio handoff.
+
+## Verified Bluetooth / 2.4 GHz radio-mode selection
+
+JieLi manufacturer opcode `FF`, field `07` is **the hardware radio mode**
+on the physically tested Phoenix 2 firmware `V0.0.116`:
+
+| Operation | RCSP parameters following sequence | Verified outcome |
+| --- | --- | --- |
+| GET | `07 FF` | `00` Bluetooth / `01` 2.4 GHz |
+| SET Bluetooth | `07 00` | ACK `00`, event, GET `00`, macOS Bluetooth output |
+| SET dongle | `07 01` | ACK `00`, event, GET `01`, macOS USB output |
+
+These values were confirmed with a reversible independent BLE CLI experiment
+and physical Mode-button notifications, not inferred from the generic
+`SWITCH_DEVICE (0x0B)` SDK opcode. The SET is not an idempotent no-op:
+sending `07 00` when already in Bluetooth mode briefly disrupted the
+Bluetooth audio output. **Always perform a fresh GET and skip redundant SET.**
+
+HeadBridge now includes an optimistic, serialized radio selector in Settings
+and its menu bar popover. It reads `FF/07` on connection and refresh and
+tracks unsolicited `FF/07` events. It uses a 1.8-second verification delay
+for the radio change, and explicitly verifies a follow-up GET; ACK alone
+does not confirm successful RF handoff. On a dropped BLE link, the reconnect
+snapshot can independently confirm the new radio mode.
+
+The Settings selector is always shown, but it is disabled until authenticated
+BLE state is known. Individual transports are disabled when not selectable:
+the 2.4 GHz segment is disabled when the verified USB receiver is not
+enumerated, and the menu-bar mode popover uses the same per-option
+availability policy. The native macOS segmented control can disable only
+the unavailable segment without hiding the setting. Bluetooth remains
+selectable while the BLE control link is ready even when its Core Audio
+endpoint is temporarily absent in dongle mode, otherwise the return switch
+would become impossible. The radio-switch provider also independently
+guards against a missing USB receiver before sending a command.
+On 2026-11-13 this control was tested in both physical switching
+directions, with the macOS audio output eventually following the hardware
+mode. The missing-dongle case was checked with synthetic Core Audio
+device inventories in unit tests, not by physically unplugging the receiver.
+
+The macOS default audio-output policy is intentionally separate:
+
+- If HATOR was the selected output **before the in-app action**, select the
+  corresponding Bluetooth/USB endpoint when Core Audio enumerates it.
+- If a *different* audio output was selected before the action, do not steal
+  sound. macOS can unexpectedly auto-select HATOR Bluetooth on reconnect even
+  after Mac mini Speakers were selected. A short-lived guard restores the
+  prior output by its UID if this happens.
+- The software does not change system input/microphone devices as a side
+  effect. Switching physical Mode does not invoke an in-app output handoff.
+- Entering dongle mode requires the USB receiver to already be enumerated,
+  otherwise HeadBridge refuses the switch with a useful error.
+
+Read-only Status rows distinguish the host's PCM audio format from the radio
+codec. Core Audio on the test Mac exposes `44.1 kHz, stereo` over Bluetooth
+and `48 kHz, stereo` through the USB dongle. Neither identifies the actual
+Bluetooth A2DP codec nor the proprietary 2.4 GHz airlink encoding. The
+hardware supports Bluetooth SBC/AAC/LDAC; macOS codec negotiation remains
+unverified. No user-facing codec selector is provided.
+
+**Live validation, 2026-11-13:** The final HeadBridge UI was tested
+in both directions (dongle → Bluetooth and Bluetooth → dongle) with the
+headset initially selected as the Mac's output. Each action immediately
+updated the selector, disabled it while pending, confirmed the new
+physical transport with readback, and the Mac's default output followed
+to the appropriate HATOR device. After each verification the selector
+became enabled again.
+
+With **Mac mini Speakers** explicitly selected instead, the same two
+in-app radio changes succeeded without moving the system output away
+from the speakers; this was checked 4 and 10 seconds after each switch,
+and the speaker output was independently confirmed through macOS.
+The original 2.4 GHz headset mode and USB-dongle Mac default output were
+restored after the tests.
+
+Separate CLI experiments had established that macOS *can* spontaneously
+select the Bluetooth HATOR output after reconnecting, so the in-app guard
+remains necessary even when macOS does not spontaneously reproduce it.
+A controlled simulation during an in-app Bluetooth → dongle change
+(force-selecting the USB HATOR output while Mac mini Speakers had been the
+previous default) confirmed that HeadBridge promptly switched the Mac's
+output back to the speakers and kept it there after the handoff settled.
+This simulated system auto-selection is **not** evidence that macOS itself
+changed the default during that specific run. Separately, when the audio
+output was left untouched, both in-app radio directions retained Mac mini
+Speakers at four and ten seconds. Final headset mode and Mac default were
+restored to 2.4 GHz USB dongle.
+
+Longer reconnects, actual user-initiated output changes mid-transition,
+physical power loss, dongle unplug/replug and wired USB-C mode have not
+yet been tested.
+
+## Context-dependent capabilities
+
+Keep **hardware capabilities** (what the physical headset supports) distinct from **effective capabilities** (what controls are meaningful for the selected audio route). A verified function must not be advertised in a context where it has no effect.
+
+| Selected audio output | BLE control | Headset Spatial Audio setting |
+| --- | --- | --- |
+| Phoenix 2 Bluetooth audio | Allowed when authenticated | Available when capability and readback are confirmed |
+| Phoenix 2 2.4 GHz USB dongle | Allowed when authenticated | **Hidden / unavailable** |
+| Other or unidentified output | No automatic association | Not exposed |
+
+The headset's BLE Spatial command (`FF/02`: verified values `00` off and `02` on) is **not** a control for the USB-dongle audio path. Do not surface or send this command as a spatial-audio setting while the 2.4 GHz dongle is the selected output, even though BLE remains connected and the command itself may ACK. Do not infer support for value `01` or additional spatial modes.
+
+HeadBridge currently exposes a single `HeadphoneProvider.capabilities` value and matches providers using Core Audio devices. During implementation, explicitly provide the selected-output context to the provider or to a capability-filtering layer, so that `spatialAudio` is excluded from **effective** capabilities for dongle audio. Apply that gate consistently to Settings, menu bar, Control Center and command dispatch; hiding just the UI control is insufficient. Switching audio routes must refresh effective capabilities without opening a second BLE session. A Bluetooth connection existing in the inventory is not evidence that Bluetooth is the currently selected audio route.
+
+Do not automatically duplicate per-audio-output restore profiles: headset-level preferences should be keyed to the stable physical headset identity; route-specific preferences require explicit design. A saved Spatial Audio value must not be restored through the BLE command while USB-dongle audio is selected. Confirm the intended behavior when switching back to Bluetooth audio before enabling restore.
+
+Other controls (ANC, EQ, RGB, microphone mute, battery) must be exposed only when their write/readback behavior and relevance to the current audio route are confirmed. Do not assume that an EQ or Spatial setting affects USB audio merely because the headset acknowledges the BLE command. USB HID control reports remain unidentified; no guessed HID output writes, firmware changes, or OTA commands.
+
+## In-app hardware test results (2026-11-12)
+
+- **PASS:** 2.4 GHz dongle recognized as active USB audio output; a single authenticated BLE session independently connected while USB audio remained selected.
+- **PASS:** live battery/status and RGB/microphone-mute readbacks; RGB OFF → ON → OFF and microphone muted → unmuted → muted with verified BLE SET/GET. Original headset settings were restored.
+- **PASS:** Spatial Audio absent from USB-dongle Settings, with setter additionally gated by the selected audio route.
+- **PASS:** HeadBridge quit/relaunch reestablished BLE and reread the headset. Two additional consecutive relaunches connected within seven seconds. With Restore on Connect temporarily enabled, original RGB/microphone states remained intact. The preference was returned to OFF. This did **not** prove reapplication of a differing saved state.
+- **PASS:** In-app Disconnect released BLE and cleared UI state; in-app Refresh reconnected and read the headset again. Periodic state updates were observed roughly every 30 seconds without overlapping poll bursts.
+- **OBSERVED:** One transient Not connected state occurred during rapid rebuild/relaunch testing. The separate CLI still connected correctly; the following controlled HeadBridge launch and two consecutive relaunches were successful. Root cause not established, so this is not a stress-test pass.
+- **PASS:** generic settings view correctly updates observed controls after BLE readback (UI observation fix).
+- **PASS:** direct ANC SET and verified GET with USB dongle selected; all three advertised modes are discovered dynamically from SYS_INFO field `0E`. The mode was subsequently changed through the UI, so no forced ANC restoration was performed.
+- **PASS:** nine EQ presets decoded from SYS_INFO field `0C`; Custom mode applied with a +1 adjustment to 400 Hz and verified with a fresh GET (field `04`). Custom 400 Hz was returned to zero and the original Normal preset reselected, with both restorations confirmed. Preset labels follow the nine-position EQ Settings grid in the installed HATOR SyncHUB application (Normal, Shooters, Rock, Movie, Action, Hip-Hop/Rap, EDM, Sport, Custom); the editor currently allows conservative ±12 gains.
+- **IMPLEMENTED, HARDWARE CONFIRMATION PENDING:** device-initiated SYS_INFO_AUTO_UPDATE (`0x09`) is parsed, acknowledged when required, and merged into the current state without disrupting an in-flight transaction. Frame handling has regression tests; physical button-originated updates have not yet been independently confirmed.
+- **OBSERVED:** the ad-hoc local build could remain in CoreBluetooth state `unknown` after a rebuild despite the Bluetooth permission showing enabled. Re-enabling HeadBridge access in macOS System Settings → Privacy & Security → Bluetooth restored connection. Local development uses ad-hoc signing when the project's self-signed release identity is not installed; rebuilding can therefore require reauthorization.
+- **PASS (2026-11-13):** macOS exposes both the Bluetooth (44.1 kHz) and USB-dongle (48 kHz) HATOR outputs, with Bluetooth selected for the Spatial test. Independent CLI confirmed spatial OFF → ON and final ON readback (`FF/02/FF`) **when Bluetooth audio was actively streaming**. This was a near-silent PCM stream; original ON state was restored.
+- **PASS (2026-11-13):** HeadBridge Settings successfully toggled Spatial ON → OFF → ON during near-silent Bluetooth playback. Both `FF/02/FF` readbacks confirmed; the original ON setting was restored and the test stream stopped. The UI showed both confirmed values.
+- **PASS (2026-11-13):** Bluetooth → 2.4 GHz USB → Bluetooth CoreAudio output changes kept one connected BLE session without reauthentication. Spatial was hidden on USB and restored on Bluetooth; RGB/microphone controls remained visible. Original Bluetooth default output and Spatial ON were restored.
+- **CONDITIONAL (2026-11-13):** with Bluetooth selected but no active playback, both HeadBridge and the independent CLI received successful SET acknowledgements but readback remained ON after an OFF request. The official app also says playback is necessary. HeadBridge now starts temporary silent playback on the explicit HATOR Bluetooth output when the user requests a Spatial change without existing playback, waits for an active audio I/O indication, then sends RCSP and holds the stream until verified readback. If streaming stops prematurely, a failed readback remains an error rather than an assumed success. Multiple failed writes were observed in this scenario; provider and BLE-client guards now reject duplicate Spatial writes while a command is pending (repeat stress test pending).
+- **PASS (2026-11-13):** Core Audio output activity, scoped to the selected HATOR Bluetooth output (not the similarly named microphone device), was observed `0 → 1 → 0` across inactive, playback, and stopped states. A listener registered with `AudioObjectAddPropertyListenerBlock` received both transitions. HeadBridge uses these notifications to detect active Bluetooth output without capturing samples or requesting audio-recording permission. Hardware verification of the Core Audio listener succeeded. The optional silent-audio activation implementation is separately described below.
+- **PASS (2026-11-13, independent audio-output test):** AudioQueue playback of all-zero 44.1 kHz stereo PCM opened the specific HATOR Bluetooth output via its device UID (`kAudioQueueProperty_CurrentDevice`). Core Audio reported active I/O during playback and idle I/O afterward. Repeated while the system default was the USB dongle: HATOR Bluetooth audio activated **without** changing the USB default. The original Bluetooth default output was restored after the test.
+- **PASS (2026-11-13, independent control test):** starting from Spatial OFF, an all-zero PCM `AudioQueue` activated the HATOR Bluetooth output and the independent authenticated RCSP CLI successfully switched Spatial ON. Spatial was then returned to the initial OFF state while the silent stream remained active; final readback confirmed `00`. The stream was terminated and Core Audio returned to idle without any audible samples.
+- **IMPLEMENTED; APP END-TO-END CHECK PENDING:** `HatorSilentAudioStream` holds zero-filled buffers only while waiting for the Core Audio running event and the verified BLE Spatial readback, then releases the queue. A bounded timeout and transport/connection cancellation also release it; pausing normal music during an in-flight change activates the silent stream as a fallback. Settings and menu-bar controls optimistically display the latest requested Spatial value immediately, including repeated taps during an in-flight BLE write; intermediate changes coalesce and writes remain serialized. If the user reverses an unsent command, audio activation is cancelled with no RCSP write. If the first command has already been sent, its readback determines whether the final intent needs another write. Failed final verification, cancellation, route changes or disconnection revert to the latest confirmed headset state. The obsolete playback-disabled UI state and duplicated pending-value state were removed. No microphone or system-output changes are involved. This optimistic state machine has dedicated unit tests, but the complete HeadBridge UI and BLE path still needs a live test with a stable signed build: CoreBluetooth stayed `unknown` after the ad-hoc rebuild even with Bluetooth permission toggled.
+- **NOT TESTED:** physical device power cycle, dongle removal/reinsert, real radio loss, long-running reconnection under all failure paths.
+
+## Minimum acceptance tests for implementation
+
+1. Both Bluetooth and USB audio outputs are recognized narrowly and associated with one physical HATOR device; unrelated or similarly named outputs never match.
+2. Switching the default audio output between Bluetooth and USB leaves one BLE control session and updates effective capabilities promptly.
+3. Spatial Audio is shown and controllable with confirmed Bluetooth audio, but absent and not callable with the USB dongle selected, including from Settings, menu bar and Control Center.
+4. BLE status/verified controls remain usable while USB audio plays; test disconnect, reconnect, stale callbacks, and headphone / dongle unplug-replug separately.
+5. Restore-on-connect does not inadvertently write Spatial Audio while USB is the active audio route; all command writes require acknowledgement/readback where supported.
+6. Run `swift test`, `HEADBRIDGE_SKIP_REGISTRATION=1 ./Scripts/build-app.sh`, and `./Scripts/check-publication.sh` after implementation, and report real-hardware results.
+
+These notes follow the lifecycle, capability, and clean-room rules in [PROVIDERS.md](PROVIDERS.md) and [CONTRIBUTING.md](../CONTRIBUTING.md).
