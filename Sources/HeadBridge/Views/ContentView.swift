@@ -4,6 +4,66 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// The native segmented control supports disabling an individual transport.
+/// A SwiftUI segmented Picker only reliably disables the entire control.
+private struct HatorRadioModePicker: NSViewRepresentable {
+    let selected: HatorRadioMode?
+    let canChange: Bool
+    let dongleAvailable: Bool
+    let onSelect: (HatorRadioMode) -> Void
+
+    func makeNSView(context: Context) -> NSSegmentedControl {
+        let control = NSSegmentedControl(
+            labels: HatorRadioMode.allCases.map(\.title),
+            trackingMode: .selectOne,
+            target: context.coordinator,
+            action: #selector(Coordinator.didSelect(_:))
+        )
+        control.segmentStyle = .rounded
+        control.segmentDistribution = .fillEqually
+        control.setAccessibilityLabel("Wireless mode")
+        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return control
+    }
+
+    func updateNSView(_ control: NSSegmentedControl, context: Context) {
+        context.coordinator.onSelect = onSelect
+        control.isEnabled = canChange
+        for (index, mode) in HatorRadioMode.allCases.enumerated() {
+            let available = mode == .bluetooth || dongleAvailable
+            control.setEnabled(canChange && available, forSegment: index)
+            control.setToolTip(
+                available ? nil : "Connect the 2.4 GHz USB dongle first.",
+                forSegment: index
+            )
+        }
+        control.selectedSegment =
+            selected.flatMap {
+                HatorRadioMode.allCases.firstIndex(of: $0)
+            } ?? -1
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelect: onSelect)
+    }
+
+    final class Coordinator: NSObject {
+        var onSelect: (HatorRadioMode) -> Void
+
+        init(onSelect: @escaping (HatorRadioMode) -> Void) {
+            self.onSelect = onSelect
+        }
+
+        @objc func didSelect(_ sender: NSSegmentedControl) {
+            let index = sender.selectedSegment
+            guard index >= 0, index < HatorRadioMode.allCases.count,
+                sender.isEnabled(forSegment: index)
+            else { return }
+            onSelect(HatorRadioMode.allCases[index])
+        }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var manager: HeadphoneManager
     @EnvironmentObject private var controller: BowersWilkinsProvider
@@ -207,29 +267,26 @@ private struct GenericProviderSettingsView: View {
             Form {
                 Section("Connection") {
                     if let hator = provider as? HatorProvider {
-                        if let radio = hator.displayedRadioMode {
-                            Picker(
-                                "Wireless mode",
-                                selection: Binding(
-                                    get: { hator.displayedRadioMode ?? radio },
-                                    set: { hator.setRadioMode($0) }
-                                )
-                            ) {
-                                ForEach(HatorRadioMode.allCases) { mode in
-                                    Text(mode.title).tag(mode)
-                                }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Wireless mode")
+                            HatorRadioModePicker(
+                                selected: hator.displayedRadioMode,
+                                canChange: hator.canChangeRadioMode,
+                                dongleAvailable: hator.isRadioModeAvailable(.dongle),
+                                onSelect: hator.setRadioMode
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+                        if hator.requestedRadioMode != nil {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("Switching headset and checking macOS audio…")
                             }
-                            .pickerStyle(.segmented)
-                            .disabled(!hator.canChangeRadioMode)
-                            if hator.requestedRadioMode != nil {
-                                HStack(spacing: 8) {
-                                    ProgressView().controlSize(.small)
-                                    Text("Switching headset and checking macOS audio…")
-                                }
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            }
-                        } else if hator.connectionState == .ready {
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        } else if hator.displayedRadioMode == nil,
+                            hator.connectionState == .ready
+                        {
                             Text("Reading wireless mode from the headset…")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

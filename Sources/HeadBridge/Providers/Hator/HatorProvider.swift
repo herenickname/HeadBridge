@@ -187,6 +187,11 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         connectionState == .ready && confirmedRadioMode != nil && requestedRadioMode == nil
     }
 
+    func isRadioModeAvailable(_ mode: HatorRadioMode) -> Bool {
+        guard let systemAudio else { return false }
+        return mode.isAvailable(with: systemAudio.devices)
+    }
+
     var connectedDeviceID: String? { deviceUUID?.uuidString }
     var connectionStatePublisher: AnyPublisher<HeadphoneConnectionState, Never> {
         $connectionState.eraseToAnyPublisher()
@@ -377,11 +382,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
 
         // It is possible to enter dongle mode without the receiver present,
         // but the Mac could then lose headset audio entirely.
-        if target == .dongle,
-            !systemAudio.devices.contains(where: {
-                HatorAudioRoute.forDevice($0) == .usbDongle
-            })
-        {
+        if !target.isAvailable(with: systemAudio.devices) {
             radioSwitchError = "Connect the 2.4 GHz USB dongle first."
             return
         }

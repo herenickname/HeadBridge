@@ -15,6 +15,18 @@ enum HatorRadioMode: UInt8, CaseIterable, Identifiable {
         }
     }
 
+    /// Only dongle mode requires a separately enumerated USB receiver.
+    /// When the headset uses the dongle, macOS often has no Bluetooth
+    /// audio endpoint even though switching back over BLE still works.
+    func isAvailable(with devices: [SystemAudioDevice]) -> Bool {
+        switch self {
+        case .bluetooth:
+            return true
+        case .dongle:
+            return devices.contains { HatorAudioRoute.forDevice($0) == .usbDongle }
+        }
+    }
+
     var audioRoute: HatorAudioRoute {
         switch self {
         case .bluetooth: .bluetooth

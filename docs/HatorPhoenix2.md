@@ -34,6 +34,21 @@ for the radio change, and explicitly verifies a follow-up GET; ACK alone
 does not confirm successful RF handoff. On a dropped BLE link, the reconnect
 snapshot can independently confirm the new radio mode.
 
+The Settings selector is always shown, but it is disabled until authenticated
+BLE state is known. Individual transports are disabled when not selectable:
+the 2.4 GHz segment is disabled when the verified USB receiver is not
+enumerated, and the menu-bar mode popover uses the same per-option
+availability policy. The native macOS segmented control can disable only
+the unavailable segment without hiding the setting. Bluetooth remains
+selectable while the BLE control link is ready even when its Core Audio
+endpoint is temporarily absent in dongle mode, otherwise the return switch
+would become impossible. The radio-switch provider also independently
+guards against a missing USB receiver before sending a command.
+On 2026-11-13 this control was tested in both physical switching
+directions, with the macOS audio output eventually following the hardware
+mode. The missing-dongle case was checked with synthetic Core Audio
+device inventories in unit tests, not by physically unplugging the receiver.
+
 The macOS default audio-output policy is intentionally separate:
 
 - If HATOR was the selected output **before the in-app action**, select the

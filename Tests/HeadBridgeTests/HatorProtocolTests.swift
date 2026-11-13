@@ -25,6 +25,34 @@ final class HatorProtocolTests: XCTestCase {
         )
     }
 
+    func testWirelessModeAvailabilityDoesNotConfuseRadioWithAudioEndpoint() {
+        let bluetooth = SystemAudioDevice(
+            id: 101, uid: "HATOR-Bluetooth", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeBluetooth
+        )
+        let dongle = SystemAudioDevice(
+            id: 102,
+            uid: "AppleUSBAudioEngine:Jieli Technology:USB Composite Device:demo:1",
+            name: "HATOR PHOENIX 2", transportType: kAudioDeviceTransportTypeUSB
+        )
+        let unrelated = SystemAudioDevice(
+            id: 103, uid: "GenericUSB", name: "HATOR PHOENIX 2",
+            transportType: kAudioDeviceTransportTypeUSB
+        )
+        // Bluetooth can be entered via BLE even when its Core Audio output
+        // has disappeared because the headset currently uses the dongle.
+        XCTAssertTrue(HatorRadioMode.bluetooth.isAvailable(with: []))
+        XCTAssertTrue(HatorRadioMode.bluetooth.isAvailable(with: [dongle]))
+        XCTAssertTrue(HatorRadioMode.bluetooth.isAvailable(with: [bluetooth, dongle]))
+
+        // The 2.4 GHz option must be disabled without the verified receiver.
+        XCTAssertFalse(HatorRadioMode.dongle.isAvailable(with: []))
+        XCTAssertFalse(HatorRadioMode.dongle.isAvailable(with: [bluetooth]))
+        XCTAssertFalse(HatorRadioMode.dongle.isAvailable(with: [unrelated]))
+        XCTAssertTrue(HatorRadioMode.dongle.isAvailable(with: [dongle]))
+        XCTAssertTrue(HatorRadioMode.dongle.isAvailable(with: [bluetooth, dongle]))
+    }
+
     func testRadioSwitchWaitsForSettlingAfterACK() {
         XCTAssertFalse(HatorBLEClient.shouldVerifyOnAck(code: 0x07))
         XCTAssertGreaterThanOrEqual(HatorBLEClient.verificationDelay(for: 0x07), 1.8)

@@ -465,25 +465,24 @@ struct MenuPopoverView: View {
 
     private var hatorControls: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let radio = hator.displayedRadioMode {
-                menuSection("Connection") {
-                    SelectionPopoverRow(
-                        "Wireless mode",
-                        value: radio.title,
-                        icon: "antenna.radiowaves.left.and.right",
-                        options: HatorRadioMode.allCases,
-                        selected: radio,
-                        optionTitle: { $0.title },
-                        onSelect: hator.setRadioMode
-                    )
-                    .disabled(!hator.canChangeRadioMode)
-                    if let error = hator.radioSwitchError {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 14)
-                            .padding(.bottom, 6)
-                    }
+            menuSection("Connection") {
+                SelectionPopoverRow(
+                    "Wireless mode",
+                    value: hator.displayedRadioMode?.title ?? "Unavailable",
+                    icon: "antenna.radiowaves.left.and.right",
+                    options: HatorRadioMode.allCases,
+                    selected: hator.displayedRadioMode,
+                    optionTitle: { $0.title },
+                    optionEnabled: hator.isRadioModeAvailable,
+                    onSelect: hator.setRadioMode
+                )
+                .disabled(!hator.canChangeRadioMode)
+                if let error = hator.radioSwitchError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 6)
                 }
             }
             if hator.capabilities.contains(.noiseControl) {
@@ -970,6 +969,7 @@ private struct SelectionPopoverRow<Option: Identifiable & Equatable>: View {
     let options: [Option]
     let selected: Option?
     let optionTitle: (Option) -> String
+    let optionEnabled: (Option) -> Bool
     let footer: String?
     let onSelect: (Option) -> Void
 
@@ -982,6 +982,7 @@ private struct SelectionPopoverRow<Option: Identifiable & Equatable>: View {
         options: [Option],
         selected: Option?,
         optionTitle: @escaping (Option) -> String,
+        optionEnabled: @escaping (Option) -> Bool = { _ in true },
         footer: String? = nil,
         onSelect: @escaping (Option) -> Void
     ) {
@@ -991,6 +992,7 @@ private struct SelectionPopoverRow<Option: Identifiable & Equatable>: View {
         self.options = options
         self.selected = selected
         self.optionTitle = optionTitle
+        self.optionEnabled = optionEnabled
         self.footer = footer
         self.onSelect = onSelect
     }
@@ -1044,6 +1046,7 @@ private struct SelectionPopoverRow<Option: Identifiable & Equatable>: View {
                         .padding(.vertical, 5)
                     }
                     .buttonStyle(.plain)
+                    .disabled(!optionEnabled(option))
                 }
 
                 if let footer {
