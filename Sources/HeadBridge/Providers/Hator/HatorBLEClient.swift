@@ -189,6 +189,8 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     func setVendor(_ code: UInt8, value: UInt8) {
+        // A transient UI refresh must not enqueue the same in-flight command again.
+        if let activeWrite, activeWrite.code == code, activeWrite.value == value { return }
         guard isStarted, [0x02, 0x05, 0x08].contains(code),
             code != 0x02 || spatialWritesAllowed
         else { return }
@@ -505,6 +507,18 @@ final class HatorBLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDele
             "BLE central state=\(central.state.rawValue) started=\(self.isStarted) phase=\(String(describing: self.phase), privacy: .public)"
         )
         guard isStarted else { return }
+        if central.state == .unauthorized {
+            onConnection?(.failed("Allow HeadBridge Bluetooth access in System Settings"))
+            return
+        }
+        if central.state == .unsupported {
+            onConnection?(.failed("Bluetooth LE is not supported on this Mac"))
+            return
+        }
+        if central.state == .poweredOff, phase == .idle {
+            onConnection?(.failed("Turn on Bluetooth to connect the headset"))
+            return
+        }
         if central.state == .poweredOn, phase == .idle || phase == .retrying {
             beginConnect()
         } else if central.state != .poweredOn, phase != .idle, phase != .retrying {

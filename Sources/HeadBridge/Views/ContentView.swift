@@ -224,7 +224,15 @@ private struct GenericProviderSettingsView: View {
                                 isOn: Binding(
                                     get: { hator.spatialEnabled ?? spatial },
                                     set: { hator.setSpatialAudio($0) }
-                                ))
+                                )
+                            )
+                            .disabled(!hator.canChangeSpatialAudio)
+                            .help("Spatial Audio is available while playing through HATOR Bluetooth audio.")
+                            if let error = hator.spatialControlError, hator.bluetoothAudioPlaying {
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
                         }
                     }
                     if hator.rgbEnabled != nil || hator.microphoneMuted != nil {

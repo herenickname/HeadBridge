@@ -1,6 +1,60 @@
 import Combine
+import CoreAudio
 import Foundation
 import OSLog
+
+/// Watches the selected Core Audio output without accessing audio samples.
+/// The global scope is required for DeviceIsRunningSomewhere notifications.
+@MainActor
+private final class HatorPlaybackActivityMonitor {
+    var onChange: ((Bool) -> Void)?
+
+    private var deviceID: AudioDeviceID?
+    private var listener: AudioObjectPropertyListenerBlock?
+
+    func observe(deviceID nextID: AudioDeviceID?) {
+        guard nextID != deviceID else { return }
+        stop()
+        guard let nextID else { return }
+
+        var address = Self.propertyAddress()
+        guard AudioObjectHasProperty(nextID, &address) else { return }
+        let callback: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.refresh() }
+        }
+        guard AudioObjectAddPropertyListenerBlock(nextID, &address, .main, callback) == noErr else { return }
+        deviceID = nextID
+        listener = callback
+        refresh()
+    }
+
+    func stop() {
+        if let deviceID, let listener {
+            var address = Self.propertyAddress()
+            AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, listener)
+        }
+        deviceID = nil
+        listener = nil
+        onChange?(false)
+    }
+
+    private func refresh() {
+        guard let deviceID else { return }
+        var address = Self.propertyAddress()
+        var isRunning: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let success = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &isRunning) == noErr
+        onChange?(success && isRunning != 0)
+    }
+
+    private static func propertyAddress() -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+    }
+}
 
 private struct HatorRestoreProfile: Codable {
     var spatial: Bool?
@@ -34,6 +88,14 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     @Published private(set) var deviceVolumeRaw: Int?
     @Published private(set) var capabilities: HeadphoneCapabilities = []
     @Published private(set) var spatialEnabled: Bool?
+    @Published private(set) var bluetoothAudioPlaying = false
+
+    var canChangeSpatialAudio: Bool {
+        connectionState == .ready && audioRoute == .bluetooth && bluetoothAudioPlaying
+            && capabilities.contains(.spatialAudio) && spatialEnabled != nil && !spatialUpdatePending
+    }
+    @Published private(set) var spatialUpdatePending = false
+    @Published private(set) var spatialControlError: String?
     @Published private(set) var rgbEnabled: Bool?
     @Published private(set) var microphoneMuted: Bool?
     @Published private(set) var audioRoute: HatorAudioRoute = .none
@@ -45,6 +107,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     private let client = HatorBLEClient()
+    private let playbackMonitor = HatorPlaybackActivityMonitor()
     private let logger = Logger(subsystem: "io.github.herenickname.HeadBridge", category: "Hator")
     private var hasAudioOutput = false
     private var hasPairedBluetoothDevice = false
@@ -56,6 +119,11 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
 
     init() {
         restoreOnConnectEnabled = HeadphoneProfileStore.isRestoreEnabled(for: providerID)
+        playbackMonitor.onChange = { [weak self] isRunning in
+            guard let self else { return }
+            if self.bluetoothAudioPlaying != isRunning { self.bluetoothAudioPlaying = isRunning }
+            if !isRunning { self.spatialControlError = nil }
+        }
         client.onConnection = { [weak self] state in
             Task { @MainActor [weak self] in self?.applyConnection(state) }
         }
@@ -102,8 +170,13 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
 
     func updateActiveAudioDevice(_ device: SystemAudioDevice?) {
         let next = device.map(HatorAudioRoute.forDevice) ?? .none
+        playbackMonitor.observe(deviceID: next == .bluetooth ? device?.id : nil)
         guard next != audioRoute else { return }
         audioRoute = next
+        if next != .bluetooth {
+            spatialUpdatePending = false
+            spatialControlError = nil
+        }
         client.spatialWritesAllowed = next == .bluetooth
         if next != .bluetooth { client.cancelQueuedVendor(0x02) }
         updateEffectiveCapabilities()
@@ -144,6 +217,7 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     func shutdown() {
+        playbackMonitor.stop()
         client.shutdown()
         client.onConnection = nil
         client.onSnapshot = nil
@@ -190,9 +264,9 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     }
 
     func setSpatialAudio(_ enabled: Bool) {
-        guard connectionState == .ready, audioRoute == .bluetooth,
-            capabilities.contains(.spatialAudio), spatialEnabled != nil
-        else { return }
+        guard canChangeSpatialAudio else { return }
+        spatialControlError = nil
+        spatialUpdatePending = true
         client.setVendor(0x02, value: enabled ? 2 : 0)
     }
 
@@ -280,6 +354,11 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
     private func didVerifyWrite(code: UInt8, value: UInt8, verified: Bool) {
         logger.notice("BLE write verification code=\(code) value=\(value) confirmed=\(verified)")
         let wasRestore = pendingRestoreCodes.remove(code) != nil
+        if code == 0x02, audioRoute == .bluetooth {
+            spatialUpdatePending = false
+            spatialControlError =
+                verified ? nil : "Headset did not confirm the Spatial Audio change."
+        }
         guard verified, !wasRestore, let connectedDeviceID else { return }
         switch code {
         case 0x02: storedProfile.spatial = value == 2
@@ -319,6 +398,8 @@ final class HatorProvider: ObservableObject, HeadphoneProvider {
         equalizerPresets = []
         deviceVolumeRaw = nil
         spatialEnabled = nil
+        spatialUpdatePending = false
+        spatialControlError = nil
         rgbEnabled = nil
         microphoneMuted = nil
         hardwareCapabilities = []

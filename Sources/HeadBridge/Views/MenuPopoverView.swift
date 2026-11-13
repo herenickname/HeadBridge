@@ -453,6 +453,15 @@ struct MenuPopoverView: View {
             if hator.capabilities.contains(.spatialAudio), let spatial = hator.spatialEnabled {
                 menuSection("Spatial Audio") {
                     toggleRow("Spatial Audio", icon: "waveform", isOn: spatial, action: hator.setSpatialAudio)
+                        .disabled(!hator.canChangeSpatialAudio)
+                        .help("Available while playing through HATOR Bluetooth audio")
+                    if let error = hator.spatialControlError, hator.bluetoothAudioPlaying {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 6)
+                    }
                 }
             }
             if let rgb = hator.rgbEnabled {
